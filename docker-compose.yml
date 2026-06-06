@@ -1,0 +1,17 @@
+services:
+  bus-trmnl:
+    build: .
+    image: bus-trmnl:latest
+    container_name: bus-trmnl
+    restart: unless-stopped
+    ports:
+      - "2300:2300"
+    environment:
+      # Set these in a .env file next to this compose file.
+      FIVE11_API_KEY: ${FIVE11_API_KEY}
+      DEVICE_ACCESS_TOKEN: ${DEVICE_ACCESS_TOKEN:-}
+      TZ: America/Los_Angeles
+    volumes:
+      # config.yaml lives in ./data alongside the rendered images.
+      - ./data:/data
+    command: ["serve", "-config", "/data/config.yaml"]

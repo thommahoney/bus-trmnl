@@ -1,0 +1,11 @@
+# Local secrets and runtime config
+config.yaml
+.env
+
+# Rendered images / runtime data
+/images/
+/data/
+
+# Build output
+/bus-trmnl
+/out/

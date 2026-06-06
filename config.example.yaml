@@ -1,0 +1,55 @@
+# bus-trmnl configuration.
+# Copy to config.yaml and fill in the TODOs. Values like ${FIVE11_API_KEY}
+# are expanded from environment variables at load time.
+
+server:
+  # Address the HTTP server binds to.
+  listen: ":2300"
+  # Externally reachable URL of THIS server. The device downloads images from
+  # here, so it must be reachable from the device (LAN IP or public hostname).
+  base_url: "http://CHANGE-ME:2300" # TODO: set to your server's reachable URL
+  timezone: "America/Los_Angeles"
+  image_dir: "/data/images"
+
+five11:
+  # Your 511.org API token. Get one at https://511.org/open-data/token
+  api_key: "${FIVE11_API_KEY}"
+  operator: "SF" # SF = San Francisco Muni
+  base_url: "https://api.511.org/transit"
+  # 511 allows 60 requests/hour per token. With 2 distinct stops, polling each
+  # every 2 minutes = 60 requests/hour. The display itself updates faster than
+  # this because countdowns are recomputed from cached prediction timestamps.
+  poll_interval: "2m"
+
+device:
+  # If set, the device must send this in its Access-Token header. Leave empty
+  # to disable auth on a trusted LAN.
+  access_token: "${DEVICE_ACCESS_TOKEN}"
+  friendly_id: "bus-trmnl"
+
+refresh:
+  # Wake the device every 30s during the morning rush window, otherwise 60s.
+  rush_rate: "30s"
+  default_rate: "60s"
+  rush_windows:
+    - days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+      start: "07:45"
+      end: "08:15"
+
+boards:
+  # 43 and 44 outbound toward Forest Hill Station, from 9th Ave & Kirkham.
+  # Both routes board at the same stop, so they share one stop_code.
+  - title: "43 / 44 → Forest Hill"
+    stop_code: "CHANGE-ME" # TODO: run `bus-trmnl discover -query "9th Ave & Kirkham"`
+    lines: ["43", "44"]
+    destination_contains: "Forest Hill"
+    max: 3
+
+  # N Judah toward Caltrain (inbound/downtown), from 9th Ave & Judah St.
+  # The inbound destination may read "Caltrain" or "Embarcadero" depending on
+  # the run; adjust destination_contains if you see nothing.
+  - title: "N → Caltrain"
+    stop_code: "CHANGE-ME" # TODO: run `bus-trmnl discover -query "Judah"`
+    lines: ["N"]
+    destination_contains: "Caltrain"
+    max: 3
