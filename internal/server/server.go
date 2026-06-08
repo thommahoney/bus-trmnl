@@ -2,6 +2,8 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,9 +45,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/display/", s.handleDisplay)
 	mux.HandleFunc("/api/log", s.handleLog)
 	mux.HandleFunc("/api/log/", s.handleLog)
+	mux.HandleFunc("/latest", s.handleLatest)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.Handle("/images/", http.StripPrefix("/images/", http.FileServer(http.Dir(s.cfg.Server.ImageDir))))
-	return mux
+	return logRequests(mux)
+}
+
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s from=%s headers=%v", r.Method, r.URL.Path, r.RemoteAddr, r.Header)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -74,13 +85,51 @@ func (s *Server) authorized(r *http.Request) bool {
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	mac := header(r, "ID")
 	log.Printf("setup request from device %s", mac)
+
+	friendlyID := friendlyFromMAC(mac)
+
+	apiKey := s.cfg.Device.AccessToken
+	if apiKey == "" {
+		apiKey = generateToken()
+		log.Printf("generated api_key for device %s: %s", mac, apiKey)
+	}
+
+	width := atoiDefault(header(r, "WIDTH"), render.DefaultWidth)
+	height := atoiDefault(header(r, "HEIGHT"), render.DefaultHeight)
+	now := time.Now().In(s.loc)
+
+	imageURL := ""
+	filename, err := s.renderToFile(now, width, height, s.cfg.Refresh.RateAt(now))
+	if err != nil {
+		log.Printf("setup: render failed: %v", err)
+	} else {
+		imageURL = s.cfg.Server.BaseURL + "/images/" + filename
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      200,
-		"api_key":     s.cfg.Device.AccessToken,
-		"friendly_id": s.cfg.Device.FriendlyID,
-		"image_url":   "",
+		"api_key":     apiKey,
+		"friendly_id": friendlyID,
+		"image_url":   imageURL,
 		"message":     "Welcome to bus-trmnl",
 	})
+}
+
+func friendlyFromMAC(mac string) string {
+	clean := strings.ReplaceAll(mac, ":", "")
+	if len(clean) >= 6 {
+		return strings.ToUpper(clean[len(clean)-6:])
+	}
+	if clean != "" {
+		return strings.ToUpper(clean)
+	}
+	return "TRMNL"
+}
+
+func generateToken() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // handleDisplay renders the current board and tells the device when to wake.
@@ -94,9 +143,10 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	height := atoiDefault(header(r, "HEIGHT"), render.DefaultHeight)
 
 	now := time.Now().In(s.loc)
-	refresh := int(s.cfg.Refresh.RateAt(now).Seconds())
+	refreshDur := s.cfg.Refresh.RateAt(now)
+	refresh := int(refreshDur.Seconds())
 
-	filename, err := s.renderToFile(now, width, height)
+	filename, err := s.renderToFile(now, width, height, refreshDur)
 	if err != nil {
 		log.Printf("render failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": 500, "error": "render failed"})
@@ -115,8 +165,10 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 
 // renderToFile renders the current snapshot to a uniquely named PNG and prunes
 // stale files. The filename changes each cycle so the device re-downloads.
-func (s *Server) renderToFile(now time.Time, width, height int) (string, error) {
-	png, err := render.Screen(s.store.Snapshot(), now, width, height)
+func (s *Server) renderToFile(now time.Time, width, height int, refreshRate time.Duration) (string, error) {
+	boards, fetchStats := s.store.Snapshot()
+	meta := &render.Metadata{FetchStats: fetchStats, RefreshRate: refreshRate}
+	png, err := render.Screen(boards, now, width, height, meta)
 	if err != nil {
 		return "", err
 	}
@@ -163,6 +215,28 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		log.Printf("device log from %s: %s", header(r, "ID"), body)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleLatest fetches the current board snapshot and returns the rendered PNG
+// directly in the response without writing to disk.
+func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
+	width := atoiDefault(r.URL.Query().Get("width"), render.DefaultWidth)
+	height := atoiDefault(r.URL.Query().Get("height"), render.DefaultHeight)
+	now := time.Now().In(s.loc)
+
+	boards, fetchStats := s.store.Snapshot()
+	refreshRate := s.cfg.Refresh.RateAt(now)
+	meta := &render.Metadata{FetchStats: fetchStats, RefreshRate: refreshRate}
+	png, err := render.Screen(boards, now, width, height, meta)
+	if err != nil {
+		log.Printf("latest render failed: %v", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Length", strconv.Itoa(len(png)))
+	w.Write(png)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

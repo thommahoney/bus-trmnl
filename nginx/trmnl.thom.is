@@ -1,0 +1,40 @@
+server {
+    server_name trmnl.thom.is;
+
+    listen 81;
+    listen [::]:81;
+
+    # certbot webroot validation
+    # sudo certbot certonly --webroot -w /var/www/html -d trmnl.thom.is
+    location /.well-known/ {
+        root /var/www/html;
+    }
+
+    proxy_set_header Host              $http_host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location / {
+        proxy_pass http://localhost:2300;
+    }
+}
+
+server {
+    server_name trmnl.thom.is;
+
+    listen 444 ssl;
+    listen [::]:444 ssl;
+
+    ssl_certificate /etc/letsencrypt/live/trmnl.thom.is/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/trmnl.thom.is/privkey.pem;
+
+    proxy_set_header Host              $http_host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location / {
+        proxy_pass http://localhost:2300;
+    }
+}

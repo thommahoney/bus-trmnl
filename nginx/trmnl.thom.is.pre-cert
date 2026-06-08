@@ -1,0 +1,14 @@
+server {
+    server_name trmnl.thom.is;
+
+    listen 81;
+    listen [::]:81;
+
+    location /.well-known/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 302 https://$host$request_uri;
+    }
+}

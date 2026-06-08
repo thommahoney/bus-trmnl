@@ -15,6 +15,7 @@ import (
 
 // Arrival is a single predicted departure shown on a board.
 type Arrival struct {
+	LineRef     string // short route code, e.g. "43", "N"
 	Line        string
 	Destination string
 	Expected    time.Time
@@ -38,13 +39,20 @@ type Board struct {
 	Err      error
 }
 
+// FetchStats holds timing metadata from the last 511 poll cycle.
+type FetchStats struct {
+	Duration time.Duration // how long the fetch took
+	At       time.Time     // when the fetch completed
+}
+
 // Store holds the latest board snapshots and refreshes them from 511.
 type Store struct {
 	cfg    *config.Config
 	client *five11.Client
 
-	mu     sync.RWMutex
-	boards []Board
+	mu        sync.RWMutex
+	boards    []Board
+	lastFetch FetchStats
 }
 
 // NewStore creates a Store with empty boards in config order.
@@ -57,7 +65,7 @@ func NewStore(cfg *config.Config, client *five11.Client) *Store {
 }
 
 // Snapshot returns a copy of the current board state, safe for rendering.
-func (s *Store) Snapshot() []Board {
+func (s *Store) Snapshot() ([]Board, FetchStats) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]Board, len(s.boards))
@@ -66,7 +74,7 @@ func (s *Store) Snapshot() []Board {
 		b.Arrivals = append([]Arrival(nil), s.boards[i].Arrivals...)
 		out[i] = b
 	}
-	return out
+	return out, s.lastFetch
 }
 
 // Run fetches once immediately and then on the configured poll interval until
@@ -87,6 +95,8 @@ func (s *Store) Run(ctx context.Context) {
 
 // refresh fetches every distinct stop once, then maps the visits onto boards.
 func (s *Store) refresh(ctx context.Context) {
+	fetchStart := time.Now()
+
 	visitsByStop := map[string][]five11.MonitoredStopVisit{}
 	errByStop := map[string]error{}
 	for _, stop := range s.cfg.DistinctStops() {
@@ -99,6 +109,7 @@ func (s *Store) refresh(ctx context.Context) {
 		visitsByStop[stop] = visits
 	}
 
+	fetchDuration := time.Since(fetchStart)
 	now := time.Now()
 	updated := make([]Board, len(s.cfg.Boards))
 	for i, bc := range s.cfg.Boards {
@@ -114,6 +125,7 @@ func (s *Store) refresh(ctx context.Context) {
 
 	s.mu.Lock()
 	s.boards = updated
+	s.lastFetch = FetchStats{Duration: fetchDuration, At: now}
 	s.mu.Unlock()
 }
 
@@ -144,7 +156,7 @@ func filterArrivals(bc config.BoardConfig, visits []five11.MonitoredStopVisit) [
 		if line == "" {
 			line = j.LineRef
 		}
-		arrivals = append(arrivals, Arrival{Line: line, Destination: dest, Expected: expected})
+		arrivals = append(arrivals, Arrival{LineRef: j.LineRef, Line: line, Destination: dest, Expected: expected})
 	}
 
 	sort.Slice(arrivals, func(i, k int) bool {
