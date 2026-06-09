@@ -1,6 +1,9 @@
 package board
 
 import (
+	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,6 +68,60 @@ func TestFilterArrivalsMaxAndDirection(t *testing.T) {
 		if a.Destination != "Caltrain" {
 			t.Fatalf("direction filter failed: %+v", a)
 		}
+	}
+}
+
+type countingFetcher struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (f *countingFetcher) StopMonitoring(ctx context.Context, stop string) ([]five11.MonitoredStopVisit, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return nil, f.err
+}
+
+func ensureFreshConfig() *config.Config {
+	return &config.Config{
+		Five11: config.Five11Config{PollInterval: config.Duration(time.Hour)},
+		Boards: []config.BoardConfig{{Title: "test", StopCode: "111"}},
+	}
+}
+
+func TestEnsureFreshThrottles(t *testing.T) {
+	f := &countingFetcher{}
+	s := NewStore(ensureFreshConfig(), f)
+
+	s.EnsureFresh(context.Background())
+	s.EnsureFresh(context.Background())
+	if f.calls != 1 {
+		t.Fatalf("calls = %d, want 1 (second EnsureFresh should hit the cache)", f.calls)
+	}
+
+	s.mu.Lock()
+	s.lastFetch.At = time.Now().Add(-2 * time.Hour)
+	s.mu.Unlock()
+	s.EnsureFresh(context.Background())
+	if f.calls != 2 {
+		t.Fatalf("calls = %d, want 2 after the cache went stale", f.calls)
+	}
+}
+
+func TestEnsureFreshFailedFetchStillThrottles(t *testing.T) {
+	f := &countingFetcher{err: errors.New("511 down")}
+	s := NewStore(ensureFreshConfig(), f)
+
+	s.EnsureFresh(context.Background())
+	s.EnsureFresh(context.Background())
+	if f.calls != 1 {
+		t.Fatalf("calls = %d, want 1 (failures must not trigger immediate retries)", f.calls)
+	}
+	boards, _ := s.Snapshot()
+	if boards[0].Err == nil {
+		t.Fatal("board should carry the fetch error")
 	}
 }
 

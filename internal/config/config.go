@@ -12,11 +12,28 @@ import (
 
 // Config is the top-level configuration for the server.
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	Five11  Five11Config  `yaml:"five11"`
-	Device  DeviceConfig  `yaml:"device"`
-	Refresh RefreshConfig `yaml:"refresh"`
-	Boards  []BoardConfig `yaml:"boards"`
+	Server  ServerConfig   `yaml:"server"`
+	Five11  Five11Config   `yaml:"five11"`
+	Device  DeviceConfig   `yaml:"device"`
+	Refresh RefreshConfig  `yaml:"refresh"`
+	Screens []ScreenConfig `yaml:"screens"`
+	Boards  []BoardConfig  `yaml:"boards"`
+}
+
+// Screen types usable in ScreenConfig.Type.
+const (
+	ScreenMuni = "muni"
+	ScreenCat  = "cat"
+)
+
+// ScreenConfig selects one screen in the device's display rotation. The
+// device shows the configured screens in order, one per wake.
+type ScreenConfig struct {
+	// Type is the screen kind: "muni" or "cat".
+	Type string `yaml:"type"`
+	// URL overrides the image source for the "cat" screen. Defaults to
+	// https://cataas.com/cat.
+	URL string `yaml:"url"`
 }
 
 // ServerConfig controls the HTTP server and image generation.
@@ -42,9 +59,11 @@ type Five11Config struct {
 	Operator string `yaml:"operator"`
 	// BaseURL is the 511 transit API root.
 	BaseURL string `yaml:"base_url"`
-	// PollInterval is how often each distinct stop is fetched from 511.
-	// 511 limits a token to 60 requests/hour, so keep
-	// (distinct stops) * (3600 / poll seconds) at or below ~60.
+	// PollInterval is the minimum spacing between 511 fetches. Stops are
+	// fetched on demand when the MUNI screen renders and the cache is older
+	// than this, never on a fixed schedule. 511 limits a token to 60
+	// requests/hour, so keep (distinct stops) * (3600 / poll seconds) at or
+	// below ~60.
 	PollInterval Duration `yaml:"poll_interval"`
 }
 
@@ -168,6 +187,9 @@ func (c *Config) applyDefaults() {
 			End:   "08:15",
 		}}
 	}
+	if len(c.Screens) == 0 {
+		c.Screens = []ScreenConfig{{Type: ScreenMuni}}
+	}
 	for i := range c.Boards {
 		if c.Boards[i].Max == 0 {
 			c.Boards[i].Max = 3
@@ -176,18 +198,28 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) validate() error {
-	if c.Five11.APIKey == "" {
-		return fmt.Errorf("five11.api_key is required (set it or use ${FIVE11_API_KEY})")
-	}
 	if c.Server.BaseURL == "" {
 		return fmt.Errorf("server.base_url is required so the device can fetch images")
 	}
-	if len(c.Boards) == 0 {
-		return fmt.Errorf("at least one board is required")
+	for i, s := range c.Screens {
+		switch s.Type {
+		case ScreenMuni, ScreenCat:
+		default:
+			return fmt.Errorf("screens[%d]: unknown type %q (want %q or %q)", i, s.Type, ScreenMuni, ScreenCat)
+		}
 	}
-	for i, b := range c.Boards {
-		if b.StopCode == "" {
-			return fmt.Errorf("boards[%d] (%q) is missing stop_code; run the discover command to find it", i, b.Title)
+	// 511 settings only matter when a MUNI screen is in the rotation.
+	if c.HasScreen(ScreenMuni) {
+		if c.Five11.APIKey == "" {
+			return fmt.Errorf("five11.api_key is required (set it or use ${FIVE11_API_KEY})")
+		}
+		if len(c.Boards) == 0 {
+			return fmt.Errorf("at least one board is required")
+		}
+		for i, b := range c.Boards {
+			if b.StopCode == "" {
+				return fmt.Errorf("boards[%d] (%q) is missing stop_code; run the discover command to find it", i, b.Title)
+			}
 		}
 	}
 	for _, w := range c.Refresh.RushWindows {
@@ -199,6 +231,16 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
+}
+
+// HasScreen reports whether a screen of the given type is configured.
+func (c *Config) HasScreen(t string) bool {
+	for _, s := range c.Screens {
+		if s.Type == t {
+			return true
+		}
+	}
+	return false
 }
 
 // Location returns the configured timezone.

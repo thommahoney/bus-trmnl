@@ -80,8 +80,8 @@ func gray(level uint8) color.Gray {
 
 // Metadata holds timing information displayed in the footer.
 type Metadata struct {
-	FetchStats    board.FetchStats
-	RefreshRate   time.Duration // device wake interval
+	FetchStats  board.FetchStats
+	RefreshRate time.Duration // device wake interval
 }
 
 // Screen renders the boards to a grayscale PNG sized width x height.

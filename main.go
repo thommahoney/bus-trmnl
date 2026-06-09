@@ -17,6 +17,7 @@ import (
 	"github.com/thommahoney/bus-trmnl/internal/board"
 	"github.com/thommahoney/bus-trmnl/internal/config"
 	"github.com/thommahoney/bus-trmnl/internal/five11"
+	"github.com/thommahoney/bus-trmnl/internal/screen"
 	"github.com/thommahoney/bus-trmnl/internal/server"
 )
 
@@ -68,19 +69,30 @@ func runServe(args []string) {
 		log.Fatalf("timezone %q: %v", cfg.Server.Timezone, err)
 	}
 
-	warnRateLimit(cfg)
+	if cfg.HasScreen(config.ScreenMuni) {
+		warnRateLimit(cfg)
+	}
 
 	client := five11.New(cfg.Five11.APIKey, cfg.Five11.Operator, cfg.Five11.BaseURL)
 	store := board.NewStore(cfg, client)
 
+	screens := make([]screen.Screen, 0, len(cfg.Screens))
+	for _, sc := range cfg.Screens {
+		switch sc.Type {
+		case config.ScreenMuni:
+			screens = append(screens, screen.NewMuni(store, cfg.Refresh))
+		case config.ScreenCat:
+			screens = append(screens, screen.NewCat(sc.URL))
+		}
+	}
+	rot := screen.NewRotation(screens...)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go store.Run(ctx)
-
 	srv := &http.Server{
 		Addr:    cfg.Server.Listen,
-		Handler: server.New(cfg, loc, store).Handler(),
+		Handler: server.New(cfg, loc, rot).Handler(),
 	}
 
 	go func() {
@@ -90,18 +102,19 @@ func runServe(args []string) {
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	log.Printf("bus-trmnl serving on %s (base_url %s), %d board(s)", cfg.Server.Listen, cfg.Server.BaseURL, len(cfg.Boards))
+	log.Printf("bus-trmnl serving on %s (base_url %s), %d screen(s), %d board(s)", cfg.Server.Listen, cfg.Server.BaseURL, len(cfg.Screens), len(cfg.Boards))
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server: %v", err)
 	}
 }
 
-// warnRateLimit logs a warning if the polling schedule would exceed the 511
-// default budget of 60 requests/hour.
+// warnRateLimit logs the worst-case 511 request rate. Fetches happen on
+// demand — only when the MUNI screen renders, and at most once per
+// poll_interval — so the steady-state rate is at or below this.
 func warnRateLimit(cfg *config.Config) {
 	stops := len(cfg.DistinctStops())
 	perHour := float64(stops) * (3600.0 / cfg.Five11.PollInterval.D().Seconds())
-	log.Printf("polling %d distinct stop(s) every %s = ~%.0f 511 requests/hour", stops, cfg.Five11.PollInterval.D(), perHour)
+	log.Printf("fetching %d distinct stop(s) on demand, at most every %s = ~%.0f 511 requests/hour worst case", stops, cfg.Five11.PollInterval.D(), perHour)
 	if perHour > 60 {
 		log.Printf("WARNING: ~%.0f req/hour exceeds the 511 default limit of 60/hour; "+
 			"increase five11.poll_interval or request a higher limit from 511.", perHour)

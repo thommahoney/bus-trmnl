@@ -45,10 +45,19 @@ type FetchStats struct {
 	At       time.Time     // when the fetch completed
 }
 
-// Store holds the latest board snapshots and refreshes them from 511.
+// Fetcher is the subset of the 511 client the store needs. It lets tests
+// substitute a fake.
+type Fetcher interface {
+	StopMonitoring(ctx context.Context, stopCode string) ([]five11.MonitoredStopVisit, error)
+}
+
+// Store holds the latest board snapshots and refreshes them from 511 on
+// demand.
 type Store struct {
 	cfg    *config.Config
-	client *five11.Client
+	client Fetcher
+
+	fetchMu sync.Mutex // single-flights EnsureFresh
 
 	mu        sync.RWMutex
 	boards    []Board
@@ -56,7 +65,7 @@ type Store struct {
 }
 
 // NewStore creates a Store with empty boards in config order.
-func NewStore(cfg *config.Config, client *five11.Client) *Store {
+func NewStore(cfg *config.Config, client Fetcher) *Store {
 	boards := make([]Board, len(cfg.Boards))
 	for i, b := range cfg.Boards {
 		boards[i] = Board{Title: b.Title}
@@ -77,20 +86,22 @@ func (s *Store) Snapshot() ([]Board, FetchStats) {
 	return out, s.lastFetch
 }
 
-// Run fetches once immediately and then on the configured poll interval until
-// the context is cancelled.
-func (s *Store) Run(ctx context.Context) {
-	s.refresh(ctx)
-	ticker := time.NewTicker(s.cfg.Five11.PollInterval.D())
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.refresh(ctx)
-		}
+// EnsureFresh fetches from 511 if the cached snapshot is older than the
+// configured poll interval; otherwise it is a no-op, so callers may invoke it
+// on every render. Concurrent callers single-flight: they wait for the
+// in-flight fetch and then see its result. A failed fetch still advances the
+// fetch time so 511 isn't hammered on errors.
+func (s *Store) EnsureFresh(ctx context.Context) {
+	s.fetchMu.Lock()
+	defer s.fetchMu.Unlock()
+
+	s.mu.RLock()
+	last := s.lastFetch.At
+	s.mu.RUnlock()
+	if !last.IsZero() && time.Since(last) < s.cfg.Five11.PollInterval.D() {
+		return
 	}
+	s.refresh(ctx)
 }
 
 // refresh fetches every distinct stop once, then maps the visits onto boards.

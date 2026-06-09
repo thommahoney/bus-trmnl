@@ -49,6 +49,60 @@ func TestParseHHMM(t *testing.T) {
 	}
 }
 
+func TestScreensDefaultToMuni(t *testing.T) {
+	c := Config{
+		Server: ServerConfig{BaseURL: "http://example"},
+		Five11: Five11Config{APIKey: "k"},
+		Boards: []BoardConfig{{StopCode: "111"}},
+	}
+	c.applyDefaults()
+	if len(c.Screens) != 1 || c.Screens[0].Type != ScreenMuni {
+		t.Fatalf("Screens = %+v, want default [{muni}]", c.Screens)
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+}
+
+func TestScreensValidation(t *testing.T) {
+	t.Run("unknown type rejected", func(t *testing.T) {
+		c := Config{
+			Server:  ServerConfig{BaseURL: "http://example"},
+			Screens: []ScreenConfig{{Type: "weather"}},
+		}
+		if err := c.validate(); err == nil {
+			t.Fatal("expected error for unknown screen type")
+		}
+	})
+
+	t.Run("cat-only config needs no 511 settings", func(t *testing.T) {
+		c := Config{
+			Server:  ServerConfig{BaseURL: "http://example"},
+			Screens: []ScreenConfig{{Type: ScreenCat}},
+		}
+		c.applyDefaults()
+		if err := c.validate(); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+	})
+
+	t.Run("muni screen requires api key and boards", func(t *testing.T) {
+		c := Config{
+			Server:  ServerConfig{BaseURL: "http://example"},
+			Five11:  Five11Config{APIKey: "k"},
+			Screens: []ScreenConfig{{Type: ScreenMuni}},
+		}
+		if err := c.validate(); err == nil {
+			t.Fatal("expected error: muni screen with no boards")
+		}
+		c.Five11.APIKey = ""
+		c.Boards = []BoardConfig{{StopCode: "111"}}
+		if err := c.validate(); err == nil {
+			t.Fatal("expected error: muni screen with no api key")
+		}
+	})
+}
+
 func TestDistinctStops(t *testing.T) {
 	c := Config{Boards: []BoardConfig{
 		{StopCode: "111"},

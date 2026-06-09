@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,16 +16,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thommahoney/bus-trmnl/internal/board"
 	"github.com/thommahoney/bus-trmnl/internal/config"
 	"github.com/thommahoney/bus-trmnl/internal/render"
+	"github.com/thommahoney/bus-trmnl/internal/screen"
 )
 
 // Server serves the BYOS endpoints the TRMNL device polls.
 type Server struct {
-	cfg   *config.Config
-	loc   *time.Location
-	store *board.Store
+	cfg *config.Config
+	loc *time.Location
+	rot *screen.Rotation
 
 	mu       sync.Mutex
 	lastFile string
@@ -32,8 +33,8 @@ type Server struct {
 }
 
 // New creates a Server.
-func New(cfg *config.Config, loc *time.Location, store *board.Store) *Server {
-	return &Server{cfg: cfg, loc: loc, store: store}
+func New(cfg *config.Config, loc *time.Location, rot *screen.Rotation) *Server {
+	return &Server{cfg: cfg, loc: loc, rot: rot}
 }
 
 // Handler returns the HTTP mux for the server.
@@ -99,7 +100,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(s.loc)
 
 	imageURL := ""
-	filename, err := s.renderToFile(now, width, height, s.cfg.Refresh.RateAt(now))
+	filename, err := s.renderWithFallback(r.Context(), s.rot.Peek(), now, width, height)
 	if err != nil {
 		log.Printf("setup: render failed: %v", err)
 	} else {
@@ -132,7 +133,8 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
-// handleDisplay renders the current board and tells the device when to wake.
+// handleDisplay renders the next screen in the rotation and tells the device
+// when to wake.
 func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	if !s.authorized(r) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"status": 401, "error": "invalid access token"})
@@ -143,12 +145,10 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	height := atoiDefault(header(r, "HEIGHT"), render.DefaultHeight)
 
 	now := time.Now().In(s.loc)
-	refreshDur := s.cfg.Refresh.RateAt(now)
-	refresh := int(refreshDur.Seconds())
+	refresh := int(s.cfg.Refresh.RateAt(now).Seconds())
 
-	filename, err := s.renderToFile(now, width, height, refreshDur)
+	filename, err := s.renderWithFallback(r.Context(), s.rot.Next(), now, width, height)
 	if err != nil {
-		log.Printf("render failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": 500, "error": "render failed"})
 		return
 	}
@@ -163,19 +163,39 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// renderToFile renders the current snapshot to a uniquely named PNG and prunes
-// stale files. The filename changes each cycle so the device re-downloads.
-func (s *Server) renderToFile(now time.Time, width, height int, refreshRate time.Duration) (string, error) {
-	boards, fetchStats := s.store.Snapshot()
-	meta := &render.Metadata{FetchStats: fetchStats, RefreshRate: refreshRate}
-	png, err := render.Screen(boards, now, width, height, meta)
+// renderWithFallback renders scr, falling back to the other configured
+// screens in rotation order so a flaky source doesn't blank the device.
+func (s *Server) renderWithFallback(ctx context.Context, scr screen.Screen, now time.Time, width, height int) (string, error) {
+	filename, err := s.renderToFile(ctx, scr, now, width, height)
+	if err == nil {
+		return filename, nil
+	}
+	log.Printf("render %s failed: %v", scr.Name(), err)
+	for _, alt := range s.rot.All() {
+		if alt == scr {
+			continue
+		}
+		f, altErr := s.renderToFile(ctx, alt, now, width, height)
+		if altErr == nil {
+			log.Printf("fell back to %s screen", alt.Name())
+			return f, nil
+		}
+		log.Printf("render %s failed: %v", alt.Name(), altErr)
+	}
+	return "", err
+}
+
+// renderToFile renders one screen to a uniquely named PNG and prunes stale
+// files. The filename changes each cycle so the device re-downloads.
+func (s *Server) renderToFile(ctx context.Context, scr screen.Screen, now time.Time, width, height int) (string, error) {
+	png, err := scr.Render(ctx, now, width, height)
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(s.cfg.Server.ImageDir, 0o755); err != nil {
 		return "", err
 	}
-	filename := "muni-" + strconv.FormatInt(now.Unix(), 10) + ".png"
+	filename := scr.Name() + "-" + strconv.FormatInt(now.Unix(), 10) + ".png"
 	path := filepath.Join(s.cfg.Server.ImageDir, filename)
 	if err := os.WriteFile(path, png, 0o644); err != nil {
 		return "", err
@@ -217,17 +237,24 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleLatest fetches the current board snapshot and returns the rendered PNG
-// directly in the response without writing to disk.
+// handleLatest renders a screen directly into the response without writing to
+// disk or advancing the rotation. ?screen=<name> previews a specific screen;
+// the default is whichever screen is next in the rotation.
 func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 	width := atoiDefault(r.URL.Query().Get("width"), render.DefaultWidth)
 	height := atoiDefault(r.URL.Query().Get("height"), render.DefaultHeight)
 	now := time.Now().In(s.loc)
 
-	boards, fetchStats := s.store.Snapshot()
-	refreshRate := s.cfg.Refresh.RateAt(now)
-	meta := &render.Metadata{FetchStats: fetchStats, RefreshRate: refreshRate}
-	png, err := render.Screen(boards, now, width, height, meta)
+	scr := s.rot.Peek()
+	if name := r.URL.Query().Get("screen"); name != "" {
+		var ok bool
+		if scr, ok = s.rot.ByName(name); !ok {
+			http.Error(w, "unknown screen "+strconv.Quote(name), http.StatusNotFound)
+			return
+		}
+	}
+
+	png, err := scr.Render(r.Context(), now, width, height)
 	if err != nil {
 		log.Printf("latest render failed: %v", err)
 		http.Error(w, "render failed", http.StatusInternalServerError)

@@ -16,9 +16,12 @@ five11:
   api_key: "${FIVE11_API_KEY}"
   operator: "SF" # SF = San Francisco Muni
   base_url: "https://api.511.org/transit"
-  # 511 allows 60 requests/hour per token. With 2 distinct stops, polling each
-  # every 2 minutes = 60 requests/hour. The display itself updates faster than
-  # this because countdowns are recomputed from cached prediction timestamps.
+  # Minimum spacing between 511 fetches. Stops are fetched on demand when the
+  # MUNI screen is about to render and the cache is older than this — never
+  # while another screen (or a sleeping device) is up. 511 allows 60
+  # requests/hour per token; with 2 distinct stops a 2m floor caps usage at 60
+  # requests/hour worst case. The display itself updates faster than this
+  # because countdowns are recomputed from cached prediction timestamps.
   poll_interval: "2m"
 
 device:
@@ -35,6 +38,14 @@ refresh:
     - days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
       start: "07:45"
       end: "08:15"
+
+# Screens the device cycles through, in order, one per wake. Omit this section
+# to show only the MUNI arrivals board.
+screens:
+  - type: muni
+  # Uncomment to alternate the arrivals board with a random cat picture:
+  # - type: cat
+  #   # url: "https://cataas.com/cat" # optional override of the image source
 
 boards:
   # 43 and 44 outbound toward Forest Hill Station, from 9th Ave & Kirkham.
