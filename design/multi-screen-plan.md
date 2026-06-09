@@ -32,8 +32,9 @@ type Screen interface {
 Two implementations for the POC:
 
 - **`muni.go`** — wraps the existing pipeline: holds the `*board.Store` and the
-  refresh-rate function, calls `store.Snapshot()` + `render.Screen(...)`.
-  Pure refactor; the render package itself doesn't change.
+  refresh-rate function, calls `store.EnsureFresh(ctx)` (see §2), then
+  `store.Snapshot()` + `render.Screen(...)`. The render package itself doesn't
+  change.
 - **`cat.go`** — fetches a random cat photo over HTTP, fits it to the panel,
   and encodes a PNG:
   - Source: `https://cataas.com/cat` (no API key required; URL configurable).
@@ -45,7 +46,41 @@ Two implementations for the POC:
     cached one; if there's never been one, return an error so the rotation can
     fall back (see below).
 
-### 2. Rotation state
+### 2. Demand-driven 511 fetching (no 511 traffic on non-MUNI screens)
+
+**Requirement:** the server must never hit the 511.org API while the rotation
+is on the cat screen.
+
+Today `board.Store.Run` is a background ticker that polls 511 every
+`poll_interval` for the lifetime of the process, regardless of what's on
+screen. That changes:
+
+- **Remove the background poller.** `main.go` no longer launches
+  `go store.Run(ctx)`.
+- **Fetch on render instead.** `Store` gains
+  `EnsureFresh(ctx context.Context) ` — it fetches from 511 only if the cached
+  snapshot is older than `poll_interval`, otherwise it's a no-op. The MUNI
+  screen calls it at the top of `Render`. A mutex single-flights it so a
+  concurrent `/api/display` + `/latest` pair can't double-fetch.
+- The cat screen never touches the store, so a cat render makes **zero** 511
+  calls by construction.
+
+Consequences:
+
+- **Rate budget:** never worse than today (the staleness guard enforces the
+  same `poll_interval` floor between fetches), and strictly better in
+  practice — no 511 calls during cat cycles, overnight, or whenever the device
+  stops polling.
+- **Latency:** a stale MUNI render blocks on one 511 round-trip (~1–2 s) before
+  responding to the device. The device tolerates this fine; non-stale renders
+  are served from cache as before.
+- **Failure behavior is unchanged:** if the fetch fails, `EnsureFresh` keeps
+  the previous snapshot and records the per-board error, and the renderer shows
+  its existing stale/unavailable treatment.
+- `poll_interval` keeps its meaning ("minimum spacing between 511 fetches");
+  the config comment gets reworded since it's now a floor, not a schedule.
+
+### 3. Rotation state
 
 A small `screen.Rotation` type owning `[]Screen` and a cursor:
 
@@ -64,7 +99,7 @@ func (r *Rotation) ByName(string) (Screen, bool)
   returning 500. The MUNI screen renders from local cache and effectively
   can't fail, so the device never blanks out.
 
-### 3. Config: a `screens` list
+### 4. Config: a `screens` list
 
 ```yaml
 screens:
@@ -83,7 +118,7 @@ screens:
 - `main.go` builds the `[]Screen` slice from config (a small factory switch)
   and passes a `*screen.Rotation` into `server.New`.
 
-### 4. Server changes (`internal/server/server.go`)
+### 5. Server changes (`internal/server/server.go`)
 
 - `Server` gains the `*screen.Rotation`; `renderToFile` takes a `Screen` and
   delegates rendering to it instead of calling `render.Screen` directly.
@@ -93,7 +128,7 @@ screens:
 - `/latest` gains `?screen=<name>` to preview a specific screen on demand
   without touching the rotation; no param means `Peek()`.
 
-### 5. Refresh rate (unchanged for the POC)
+### 6. Refresh rate (unchanged for the POC)
 
 The device keeps waking at the configured rush/default rate regardless of which
 screen is showing, so the two screens simply alternate at that cadence.
@@ -118,12 +153,14 @@ computes `refresh_rate` per response — but it's out of scope here.
 | `internal/screen/screen.go` | new — `Screen` interface, `Rotation` |
 | `internal/screen/muni.go` | new — wraps store + `render.Screen` |
 | `internal/screen/cat.go` | new — cataas fetch, fit-to-panel, cache |
+| `internal/board/board.go` | replace `Run` ticker with `EnsureFresh` (fetch-if-stale, single-flight) |
 | `internal/config/config.go` | `screens` section, defaults, validation |
 | `internal/server/server.go` | hold `Rotation`; render via `Screen`; filename prefix; `/latest?screen=` |
-| `main.go` | build screens from config, wire `Rotation` |
-| `config.example.yaml` | document the `screens` section |
+| `main.go` | build screens from config, wire `Rotation`, drop `go store.Run(ctx)` |
+| `config.example.yaml` | document the `screens` section; reword `poll_interval` comment |
 | `internal/config/config_test.go` | defaults + validation tests |
-| `internal/screen/*_test.go` | rotation order/wraparound; cat screen against `httptest.Server` with a fixture image, including failure → cached-image path |
+| `internal/board/board_test.go` | `EnsureFresh` staleness guard (fresh cache → zero fetches; stale → one) |
+| `internal/screen/*_test.go` | rotation order/wraparound; cat screen against `httptest.Server` with a fixture image, including failure → cached-image path; cat render performs no store/511 calls |
 
 ## Testing & verification
 
