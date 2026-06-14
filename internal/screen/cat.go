@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
@@ -89,11 +90,31 @@ func (c *Cat) fetch(ctx context.Context) (image.Image, error) {
 	return img, nil
 }
 
+// maxEInkImageBytes stays just under the TRMNL X firmware's 750000-byte image
+// limit (config.h: MAX_IMAGE_SIZE); a larger download is rejected by the device.
+const maxEInkImageBytes = 745000
+
+// grayLevels are the grayscale depths fit tries, richest first. The X is a true
+// 16-level panel (FastEPD 4-bpp mode), so 16 is the quality target; busy frames
+// that would exceed the size cap step down to 8 then 4 levels (4 always fits).
+// All encode to a compact <=4-bpp PNG, and grayscale always refreshes fully.
+var grayLevels = []int{16, 8, 4}
+
+// grayPalette returns an evenly spaced n-level grayscale palette.
+func grayPalette(n int) color.Palette {
+	p := make(color.Palette, n)
+	for i := range p {
+		p[i] = color.Gray{Y: uint8(i * 0xFF / (n - 1))}
+	}
+	return p
+}
+
 // fit scales img to fill as much of a width x height white canvas as possible
-// without cropping, converts to grayscale, and encodes a PNG.
+// without cropping, then Floyd-Steinberg dithers it to the most gray levels that
+// keep the PNG under the device's size limit, and encodes it.
 func fit(img image.Image, width, height int) ([]byte, error) {
-	dst := image.NewGray(image.Rect(0, 0, width, height))
-	xdraw.Draw(dst, dst.Bounds(), image.NewUniform(color.White), image.Point{}, xdraw.Src)
+	canvas := image.NewGray(image.Rect(0, 0, width, height))
+	xdraw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, xdraw.Src)
 
 	b := img.Bounds()
 	if b.Dx() > 0 && b.Dy() > 0 {
@@ -102,12 +123,22 @@ func fit(img image.Image, width, height int) ([]byte, error) {
 		h := int(float64(b.Dy()) * scale)
 		x0 := (width - w) / 2
 		y0 := (height - h) / 2
-		xdraw.CatmullRom.Scale(dst, image.Rect(x0, y0, x0+w, y0+h), img, b, xdraw.Over, nil)
+		xdraw.CatmullRom.Scale(canvas, image.Rect(x0, y0, x0+w, y0+h), img, b, xdraw.Over, nil)
 	}
 
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, dst); err != nil {
-		return nil, err
+	var smallest []byte
+	for _, n := range grayLevels {
+		dithered := image.NewPaletted(canvas.Bounds(), grayPalette(n))
+		draw.FloydSteinberg.Draw(dithered, dithered.Bounds(), canvas, image.Point{})
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, dithered); err != nil {
+			return nil, err
+		}
+		if buf.Len() <= maxEInkImageBytes {
+			return buf.Bytes(), nil
+		}
+		smallest = buf.Bytes()
 	}
-	return buf.Bytes(), nil
+	// Even the fewest-level encoding exceeded the cap (very unlikely); send it.
+	return smallest, nil
 }
