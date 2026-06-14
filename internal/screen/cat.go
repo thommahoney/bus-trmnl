@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -19,15 +20,17 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
-// DefaultCatURL serves a random cat picture without an API key.
-const DefaultCatURL = "https://cataas.com/cat"
+// DefaultCatURL fetches a random cat without an API key, pre-desaturated via
+// cataas's custom filter and sized 1000x750 (4:3, matching the panel) so it
+// scales up to fill the screen. cataas caps output at 1000x1000.
+const DefaultCatURL = "https://cataas.com/cat?filter=custom&r=100&g=100&b=100&width=1000&height=750"
 
 // maxCatBody caps how much image data a single fetch will read.
 const maxCatBody = 20 << 20
 
-// Cat renders a random cat photo fetched over HTTP, letterboxed onto a white
-// panel. The last successfully fetched photo is kept as a fallback so a flaky
-// source doesn't blank the screen.
+// Cat renders a random cat photo fetched over HTTP, scaled to fill the panel.
+// The last successfully fetched photo is kept as a fallback so a flaky source
+// doesn't blank the screen.
 type Cat struct {
 	url  string
 	http *http.Client
@@ -109,18 +112,20 @@ func grayPalette(n int) color.Palette {
 	return p
 }
 
-// fit scales img to fill as much of a width x height white canvas as possible
-// without cropping, then Floyd-Steinberg dithers it to the most gray levels that
-// keep the PNG under the device's size limit, and encodes it.
+// fit scales img to completely fill a width x height canvas (cover: upscaling as
+// needed and center-cropping any overflow), then Floyd-Steinberg dithers it to
+// the most gray levels that keep the PNG under the device's size limit.
 func fit(img image.Image, width, height int) ([]byte, error) {
 	canvas := image.NewGray(image.Rect(0, 0, width, height))
 	xdraw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, xdraw.Src)
 
 	b := img.Bounds()
 	if b.Dx() > 0 && b.Dy() > 0 {
-		scale := min(float64(width)/float64(b.Dx()), float64(height)/float64(b.Dy()))
-		w := int(float64(b.Dx()) * scale)
-		h := int(float64(b.Dy()) * scale)
+		// Cover: scale so the image fills both dimensions, center it, and let the
+		// draw clip whatever extends past the canvas.
+		scale := max(float64(width)/float64(b.Dx()), float64(height)/float64(b.Dy()))
+		w := int(math.Ceil(float64(b.Dx()) * scale))
+		h := int(math.Ceil(float64(b.Dy()) * scale))
 		x0 := (width - w) / 2
 		y0 := (height - h) / 2
 		xdraw.CatmullRom.Scale(canvas, image.Rect(x0, y0, x0+w, y0+h), img, b, xdraw.Over, nil)
