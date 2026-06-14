@@ -4,6 +4,8 @@ A self-hosted [TRMNL](https://trmnl.com) **BYOS** (Bring Your Own Server) that
 shows live San Francisco **MUNI** arrivals on a TRMNL **X** e-ink device, using
 the [511.org](https://511.org/open-data/transit) real-time API.
 
+> _thommahoney vibe coded this repo and hasn't read a single line of the code._
+
 The device cycles through a configurable list of **screens**, one per wake. Out
 of the box the MUNI arrivals screen shows two boards:
 
