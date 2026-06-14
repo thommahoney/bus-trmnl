@@ -1,16 +1,19 @@
 # bus-trmnl
 
 A self-hosted [TRMNL](https://trmnl.com) **BYOS** (Bring Your Own Server) that
-displays live San Francisco **MUNI** arrivals on a TRMNL e-ink device, using the
-[511.org](https://511.org/open-data/transit) real-time API.
+shows live San Francisco **MUNI** arrivals on a TRMNL **X** e-ink device, using
+the [511.org](https://511.org/open-data/transit) real-time API.
 
-Out of the box it shows two boards:
+The device cycles through a configurable list of **screens**, one per wake. Out
+of the box the MUNI arrivals screen shows two boards:
 
 - **43 / 44 → Forest Hill Station**, outbound from 9th Ave & Kirkham
 - **N Judah → Caltrain**, inbound from 9th Ave & Judah St
 
-The device wakes **every 30 seconds during the weekday morning rush (7:45–8:15
-AM)** and **every 60 seconds** the rest of the time.
+A second screen type renders a random **cat photo** (dithered for e-ink); add,
+remove, or reorder screens via the `screens:` config. The device wakes **every
+30 seconds during the weekday morning rush (7:45–8:15 AM)** and **every 60
+seconds** the rest of the time.
 
 ## Why BYOS?
 
@@ -26,19 +29,24 @@ at a custom server.
 
 ## How it works
 
-Two decoupled loops:
+The TRMNL device is a stateless thin client: it wakes, calls `GET /api/display`,
+downloads the `image_url` it's handed, sleeps for `refresh_rate` seconds, and
+repeats. Everything else is server-side:
 
-1. **Data loop** — a background poller fetches each distinct stop from 511's
-   SIRI `StopMonitoring` endpoint on `five11.poll_interval`, filters by
-   line/destination/direction, and caches the predictions.
-2. **Device loop** — when the device calls `GET /api/display`, the server
-   recomputes countdowns from the cached prediction timestamps, renders a
-   grayscale PNG sized to the device, and returns it along with the
-   time-of-day `refresh_rate`.
+1. **Rotation** — each successive `/api/display` serves the next screen in the
+   configured list, so the device cycles through them with no device-side state.
+2. **Rendering** — for the MUNI screen the server recomputes countdowns from
+   cached 511 predictions and renders a grayscale PNG sized to the device, with
+   the time-of-day `refresh_rate`.
+3. **Demand-driven 511** — there's no background poller. The MUNI screen
+   refreshes the 511 cache only when it's about to render *and* the cache is
+   older than `five11.poll_interval` (single-flighted). Other screens (e.g. the
+   cat) make zero 511 calls.
 
-Decoupling means the **display** can refresh every 30s while we stay within
-511's **60 requests/hour** token limit (2 stops × every 2 min = 60/hour). The
-server logs a warning at startup if your polling schedule would exceed that.
+So the **display** can refresh every 30s while staying within 511's **60
+requests/hour** token limit (2 stops, fetched at most every 2 min = 60/hour);
+`poll_interval` is the floor between fetches. The server logs a warning at
+startup if that floor would exceed the limit.
 
 ### Device API endpoints
 
@@ -47,6 +55,7 @@ server logs a warning at startup if your polling schedule would exceed that.
 | `GET /api/setup`  | First-boot pairing; returns `api_key` / `friendly_id`.      |
 | `GET /api/display`| Returns `{ image_url, filename, refresh_rate, ... }`.       |
 | `POST /api/log`   | Accepts device telemetry; returns 204.                      |
+| `GET /latest`     | Preview a screen as PNG (`?screen=<name>`); no rotation advance. |
 | `GET /images/...` | Serves rendered PNGs.                                        |
 | `GET /health`     | Health check.                                               |
 
@@ -109,6 +118,10 @@ Key fields:
   image URL it downloads.
 - `five11.poll_interval` — keep `(distinct stops) × (3600 / seconds) ≤ 60`.
 - `refresh.rush_rate` / `default_rate` / `rush_windows` — the wake cadence.
+- `screens[]` — the rotation, in order, one per wake. Each entry is
+  `{type: muni}` or `{type: cat, url: <optional cataas URL>}`. Omit the section
+  to default to a single `muni` screen; 511 settings are only required when a
+  `muni` screen is present.
 - `boards[]` — each board's `stop_code`, `lines`, `destination_contains`,
   `direction`, and `max`.
 
@@ -123,12 +136,17 @@ go test ./...
 go vet ./...
 ```
 
+You can also run these (and the server) in Docker without a local Go toolchain —
+see [`CLAUDE.md`](CLAUDE.md) for the container-based workflow.
+
 ## Notes & caveats
 
-- **Image format**: the server renders 8-bit grayscale PNG at the device's
-  reported `WIDTH`/`HEIGHT` (default 1872×1404 for the TRMNL X). Verify the
-  exact format your firmware expects during first setup and adjust
-  `internal/render` if needed.
+- **Image format & size cap**: the MUNI board renders as an 8-bit grayscale PNG
+  at the device's reported `WIDTH`/`HEIGHT` (default 1872×1404 for the TRMNL X).
+  The X firmware rejects any image over ~750 KB, so the cat screen
+  Floyd–Steinberg-dithers photos to the panel's 16 gray levels (a compact 4-bpp
+  PNG) to stay under the cap. See [`CLAUDE.md`](CLAUDE.md) for the firmware
+  details.
 - **511 quirks**: responses carry a UTF-8 BOM (stripped) and occasionally
   return string fields as single-element arrays (handled by `FlexString`).
 - If you add more stops, raise `poll_interval` or
