@@ -41,13 +41,28 @@ refresh:
 
 # Screens the device cycles through, in order, one per wake. Omit this section
 # to show only the MUNI arrivals board.
+#
+# MUNI screens take a `design` that picks the layout. The first three relocate
+# their content on every render so nothing burns into the e-ink; "classic" is
+# the original static detailed board (it is the layout that burns in — avoid it
+# for a panel that stays on MUNI). Listing all three rotates the layout itself
+# wake-to-wake for maximum panel rest:
+#   radar   rotating dial; arrivals approach a central "you", distance = minutes
+#   board   reflowing departure board (default); legible big numerals
+#   stream  single timeline; arrivals flow toward "now"
+#   classic original board with stop titles, line names and destinations
 screens:
   - type: muni
-  # Uncomment to alternate the arrivals board with a random cat picture:
-  # - type: cat
-  #   # Optional override of the image source. The default already filters to
-  #   # grayscale and sizes the image to fill the panel:
-  #   # url: "https://cataas.com/cat?filter=custom&r=100&g=100&b=100&width=1000&height=750"
+    design: radar
+  - type: muni
+    design: board
+  - type: muni
+    design: stream
+  # A cat photo gives the panel a full-frame refresh between the MUNI screens,
+  # which also helps with ghosting. The default URL already filters to grayscale
+  # and sizes the image to fill the panel:
+  - type: cat
+  #   url: "https://cataas.com/cat?filter=custom&r=100&g=100&b=100&width=1000&height=750"
 
 boards:
   # 43 and 44 outbound toward Forest Hill Station, from 9th Ave & Kirkham.

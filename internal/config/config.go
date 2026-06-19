@@ -26,11 +26,24 @@ const (
 	ScreenCat  = "cat"
 )
 
+// MUNI designs usable in ScreenConfig.Design. The first three relocate their
+// content every render to avoid e-ink burn-in; "classic" is the original static
+// detailed board (kept for back-compat — it is the layout that burns in).
+const (
+	MuniRadar   = "radar"   // rotating dial; arrivals approach the hub
+	MuniBoard   = "board"   // reflowing departure board (default)
+	MuniStream  = "stream"  // timeline that flows toward "now"
+	MuniClassic = "classic" // original static board with titles/destinations
+)
+
 // ScreenConfig selects one screen in the device's display rotation. The
 // device shows the configured screens in order, one per wake.
 type ScreenConfig struct {
 	// Type is the screen kind: "muni" or "cat".
 	Type string `yaml:"type"`
+	// Design selects the MUNI layout: "radar", "board", "stream" or
+	// "classic". Ignored for non-MUNI screens. Empty defaults to "board".
+	Design string `yaml:"design"`
 	// URL overrides the image source for the "cat" screen. Defaults to
 	// https://cataas.com/cat.
 	URL string `yaml:"url"`
@@ -190,6 +203,11 @@ func (c *Config) applyDefaults() {
 	if len(c.Screens) == 0 {
 		c.Screens = []ScreenConfig{{Type: ScreenMuni}}
 	}
+	for i := range c.Screens {
+		if c.Screens[i].Type == ScreenMuni && c.Screens[i].Design == "" {
+			c.Screens[i].Design = MuniBoard
+		}
+	}
 	for i := range c.Boards {
 		if c.Boards[i].Max == 0 {
 			c.Boards[i].Max = 3
@@ -203,7 +221,13 @@ func (c *Config) validate() error {
 	}
 	for i, s := range c.Screens {
 		switch s.Type {
-		case ScreenMuni, ScreenCat:
+		case ScreenMuni:
+			switch s.Design {
+			case MuniRadar, MuniBoard, MuniStream, MuniClassic:
+			default:
+				return fmt.Errorf("screens[%d]: unknown muni design %q (want %q, %q, %q or %q)", i, s.Design, MuniRadar, MuniBoard, MuniStream, MuniClassic)
+			}
+		case ScreenCat:
 		default:
 			return fmt.Errorf("screens[%d]: unknown type %q (want %q or %q)", i, s.Type, ScreenMuni, ScreenCat)
 		}

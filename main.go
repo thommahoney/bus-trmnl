@@ -80,7 +80,7 @@ func runServe(args []string) {
 	for _, sc := range cfg.Screens {
 		switch sc.Type {
 		case config.ScreenMuni:
-			screens = append(screens, screen.NewMuni(store, cfg.Refresh))
+			screens = append(screens, screen.NewMuni(store, cfg.Refresh, sc.Design))
 		case config.ScreenCat:
 			screens = append(screens, screen.NewCat(sc.URL))
 		}

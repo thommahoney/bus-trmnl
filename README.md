@@ -12,10 +12,24 @@ of the box the MUNI arrivals screen shows two boards:
 - **43 / 44 → Forest Hill Station**, outbound from 9th Ave & Kirkham
 - **N Judah → Caltrain**, inbound from 9th Ave & Judah St
 
-A second screen type renders a random **cat photo** (dithered for e-ink); add,
-remove, or reorder screens via the `screens:` config. The device wakes **every
-30 seconds during the weekday morning rush (7:45–8:15 AM)** and **every 60
-seconds** the rest of the time.
+The MUNI screen comes in several **designs** (selectable per screen via
+`design:`) that distil arrivals to just "bus" vs "train" plus a countdown and
+**relocate their content on every render** to avoid burning the image into the
+e-ink:
+
+- **`radar`** — a rotating dial; arrivals approach a central hub, nearer = sooner.
+- **`board`** — a reflowing departure board with big, glanceable numerals (default).
+- **`stream`** — a single timeline along which arrivals flow toward "now".
+- **`classic`** — the original static board with stop titles and destinations
+  (kept for back-compat; it is the layout that burns in).
+
+A second screen type renders a random **cat photo** (dithered for e-ink), which
+also gives the panel a full-frame refresh between MUNI screens. Add, remove, or
+reorder screens via the `screens:` config; the default rotation cycles the three
+moving MUNI designs and a cat. To further fight ghosting, the server forces a
+full panel refresh on every wake. The device wakes **every 30 seconds during the
+weekday morning rush (7:45–8:15 AM)** and **every 60 seconds** the rest of the
+time.
 
 ## Why BYOS?
 
@@ -121,7 +135,9 @@ Key fields:
 - `five11.poll_interval` — keep `(distinct stops) × (3600 / seconds) ≤ 60`.
 - `refresh.rush_rate` / `default_rate` / `rush_windows` — the wake cadence.
 - `screens[]` — the rotation, in order, one per wake. Each entry is
-  `{type: muni}` or `{type: cat, url: <optional cataas URL>}`. Omit the section
+  `{type: muni, design: <radar|board|stream|classic>}` (design defaults to
+  `board`) or `{type: cat, url: <optional cataas URL>}`. List the same `muni`
+  type with different designs to rotate layouts wake-to-wake. Omit the section
   to default to a single `muni` screen; 511 settings are only required when a
   `muni` screen is present.
 - `boards[]` — each board's `stop_code`, `lines`, `destination_contains`,

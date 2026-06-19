@@ -9,8 +9,16 @@ bus-trmnl is a self-hosted **TRMNL BYOS** ("Bring Your Own Server") written in
 Go. It drives a TRMNL **X** e-ink device (10.3", 1872×1404, 16-level grayscale)
 by serving full-screen PNGs the device downloads on each wake. The primary
 screen shows live **SF MUNI** arrival predictions from the **511.org** SIRI API.
-A rotation cycles the device through multiple screens — currently the MUNI
-arrivals board and a random cat photo.
+A rotation cycles the device through multiple screens — currently three "moving"
+MUNI designs (`radar`, `board`, `stream`) and a random cat photo.
+
+The MUNI designs exist to fight e-ink **burn-in/ghosting** (observed on the
+physical panel): each reduces arrivals to a bus/train glyph + countdown and
+**relocates its content on every render** so no pixel carries the same value
+forever. They are selected per screen via the `design:` config — `radar`/`board`/
+`stream`, plus `classic` (the original static detailed board, which is the layout
+that burns in). `internal/render/designs.go` holds them; `design/philosophy.md`
+covers the visual rationale.
 
 Why BYOS: the hosted TRMNL cloud caps updates at ~5 min; BYOS lets us drive a
 sub-minute, time-of-day refresh cadence.
@@ -26,6 +34,9 @@ server-side:
   timestamped so it always re-fetches).
 - **refresh_rate** is per-response: 30s during the weekday rush window
   (07:45–08:15 America/Los_Angeles), 60s otherwise.
+- **Forced full refresh:** `/api/display` returns `maximum_compatibility: true`
+  so the device does a full panel refresh every wake — belt-and-suspenders
+  against the observed ghosting, on top of the relocating MUNI designs.
 - **Demand-driven 511:** there is no background poller. The MUNI screen calls
   `board.Store.EnsureFresh` at render time, which hits 511 only if the cache is
   older than `poll_interval` (default 2m), single-flighted. Non-MUNI screens
@@ -36,15 +47,20 @@ server-side:
 - `main.go` — CLI (`serve`, `discover`); builds the `[]screen.Screen` from
   config and wires a `screen.Rotation` into the server.
 - `internal/config` — YAML load/validate, `${ENV}` expansion, refresh windows,
-  the `screens` list (back-compat: omitted ⇒ `[{type: muni}]`).
+  the `screens` list (back-compat: omitted ⇒ `[{type: muni}]`) and each MUNI
+  screen's `design` (empty ⇒ `board`; validated against the four design names).
 - `internal/five11` — 511.org SIRI `StopMonitoring` client (handles the UTF-8
   BOM and string-or-array `FlexString` quirks).
 - `internal/board` — `Store`: fetch/filter/cache arrivals; `EnsureFresh`
   (demand-driven, throttled, single-flight); `Fetcher` interface for test fakes.
-- `internal/render` — boards → grayscale PNG with embedded fonts, tuned for
-  e-ink (see `design/philosophy.md`).
-- `internal/screen` — `Screen` interface + `Rotation`; `Muni` (wraps
-  board+render) and `Cat` (fetches cataas.com, scales, Floyd–Steinberg dithers
+- `internal/render` — grayscale PNGs with embedded fonts, tuned for e-ink (see
+  `design/philosophy.md`). `render.go` is the `classic` board; `designs.go` holds
+  the moving designs (`Radar`/`Reflow`/`Stream`) — pure `*Layout` helpers place
+  big numerals clear of bus/train markers at any rotation, covered by
+  `designs_test.go` (collision + on-canvas + size-cap assertions).
+- `internal/screen` — `Screen` interface + `Rotation`; `Muni` (parameterized by
+  `design`, name `muni-<design>`, drives anti-burn-in motion via a per-screen
+  render counter) and `Cat` (fetches cataas.com, scales, Floyd–Steinberg dithers
   to 16-level grayscale under the device size cap).
 - `internal/server` — BYOS HTTP API: `/api/display`, `/api/setup`, `/api/log`,
   `/latest` (preview, `?screen=<name>`), `/images/`, `/health`.
@@ -67,8 +83,9 @@ server-side:
   ```
   (`-buildvcs=false` avoids git "dubious ownership" when running as root over
   the mounted checkout; the `/go` volume caches modules between runs.)
-- Verify a render visually: `curl localhost:2300/latest?screen=cat` (or `muni`),
-  which previews a screen without advancing the rotation.
+- Verify a render visually: `curl localhost:2300/latest?screen=cat` (or
+  `muni-radar`, `muni-board`, `muni-stream`), which previews a screen without
+  advancing the rotation.
 
 ## TRMNL X firmware (the device)
 
@@ -126,12 +143,10 @@ facts we rely on (verified from source + the device's `/api/log` telemetry):
   exposure. Consider auth and/or a short cat cache.
 - The `server` package has **no automated tests** (the `renderWithFallback`
   fallback path is only smoke-tested).
-- `README.md` is **stale** — it predates the multi-screen rotation, cat screen,
-  demand-driven 511, and dithering. Update it when convenient.
 
 ## Where to read more
 
-- `README.md` — user-facing setup (stale, see above).
+- `README.md` — user-facing setup.
 - `HANDOFF.md` — original build notes: full BYOS API contract, X hardware, and a
   decision log.
 - `design/multi-screen-plan.md` — rotation + demand-driven 511 design.

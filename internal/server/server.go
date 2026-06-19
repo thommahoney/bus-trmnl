@@ -160,6 +160,9 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 		"refresh_rate":    refresh,
 		"reset_firmware":  false,
 		"update_firmware": false,
+		// Force a full panel refresh on every wake so a screen transition never
+		// leaves ghosting from the previous image.
+		"maximum_compatibility": true,
 	})
 }
 
