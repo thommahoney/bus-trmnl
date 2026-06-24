@@ -82,6 +82,7 @@ func gray(level uint8) color.Gray {
 type Metadata struct {
 	FetchStats  board.FetchStats
 	RefreshRate time.Duration // device wake interval
+	Battery     Battery       // device charge, shown next to the clock
 }
 
 // Screen renders the boards to a grayscale PNG sized width x height.
@@ -128,6 +129,11 @@ func Screen(boards []board.Board, now time.Time, width, height int, meta *Metada
 	dc.SetFontFace(newFace(ibmPlexMonoReg, clockSize))
 	dc.SetColor(gray(80))
 	clock := now.Format("3:04:05 PM")
+	if meta != nil {
+		if lbl := batteryLabel(meta.Battery); lbl != "" {
+			clock += "   " + lbl
+		}
+	}
 	cw, _ := dc.MeasureString(clock)
 	dc.DrawString(clock, rightEdge-cw, y+clockSize)
 

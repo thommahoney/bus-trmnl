@@ -174,7 +174,8 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 		next = s.rot.Next()
 	}
 
-	filename, err := s.renderWithFallback(r.Context(), next, now, width, height)
+	ctx := render.ContextWithBattery(r.Context(), parseBattery(r))
+	filename, err := s.renderWithFallback(ctx, next, now, width, height)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": 500, "error": "render failed"})
 		return
@@ -294,7 +295,15 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	png, err := scr.Render(r.Context(), now, width, height)
+	// ?battery=<percent> previews the on-clock battery readout without a device.
+	ctx := r.Context()
+	if bs := r.URL.Query().Get("battery"); bs != "" {
+		if n, err := strconv.Atoi(bs); err == nil {
+			ctx = render.ContextWithBattery(ctx, render.Battery{Percent: n, Present: true})
+		}
+	}
+
+	png, err := scr.Render(ctx, now, width, height)
 	if err != nil {
 		log.Printf("latest render failed: %v", err)
 		http.Error(w, "render failed", http.StatusInternalServerError)
@@ -391,6 +400,21 @@ var errNoFile = errors.New("no file in form upload")
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// parseBattery reads the device's charge from the request headers the TRMNL
+// firmware sends on every /api/display poll. Absent (e.g. non-device clients)
+// yields a zero Battery, which renders nothing.
+func parseBattery(r *http.Request) render.Battery {
+	s := header(r, "Percent-Charged", "Battery-Percent")
+	if s == "" {
+		return render.Battery{}
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return render.Battery{}
+	}
+	return render.Battery{Percent: n, Present: true}
 }
 
 func atoiDefault(s string, def int) int {

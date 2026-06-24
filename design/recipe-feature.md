@@ -121,11 +121,17 @@ renderer normalizes them in `render/recipe.go`:
 
 - The device reports rich battery telemetry in request headers on every
   `/api/display` poll (`Percent-Charged`, `Battery-Voltage`, `Battery-Charging`,
-  `Usb-Connected`, `Rssi`, `Fw-Version`, `Model`, …). The server currently just
-  logs it. A flat battery freezes the panel on its last image (e-ink holds with
-  no power) — which looks identical to "stuck", so check `Percent-Charged`/USB
-  before assuming a server problem. Potential future use: a `/status` endpoint or
-  an on-screen low-battery glyph.
+  `Usb-Connected`, `Rssi`, `Fw-Version`, `Model`, …). A flat battery freezes the
+  panel on its last image (e-ink holds with no power) — which looks identical to
+  "stuck", so check `Percent-Charged`/USB before assuming a server problem.
+- **Battery readout on the clock.** The time-showing screens (the four MUNI
+  designs) now print the charge next to the clock, e.g. `9:53 PM   73%`. The
+  percent comes from the `Percent-Charged` request header, plumbed from
+  `server.handleDisplay` → a `render.Battery` in the render context
+  (`render.ContextWithBattery`/`BatteryFromContext`) → `render.In`/`Metadata`,
+  so the fixed `Screen.Render` interface didn't have to change. Cat/recipe show
+  no clock, so they show no battery. `/latest?screen=…&battery=NN` previews it
+  without a device. Absent telemetry (preview, setup) renders the clock alone.
 
 ## Deferred / possible next steps
 

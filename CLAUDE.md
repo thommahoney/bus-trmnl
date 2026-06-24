@@ -57,15 +57,19 @@ server-side:
   `design/philosophy.md`). `render.go` is the `classic` board; `designs.go` holds
   the moving designs (`Radar`/`Reflow`/`Stream`) — pure `*Layout` helpers place
   big numerals clear of bus/train markers at any rotation, covered by
-  `designs_test.go` (collision + on-canvas + size-cap assertions).
+  `designs_test.go` (collision + on-canvas + size-cap assertions). All four MUNI
+  clocks render the device battery `%` next to the time; `battery.go` carries the
+  per-request `Battery` (from the `Percent-Charged` header) through the render
+  context.
 - `internal/screen` — `Screen` interface + `Rotation`; `Muni` (parameterized by
   `design`, name `muni-<design>`, drives anti-burn-in motion via a per-screen
   render counter) and `Cat` (fetches cataas.com, scales, Floyd–Steinberg dithers
   to 16-level grayscale under the device size cap).
 - `internal/server` — BYOS HTTP API: `/api/display`, `/api/setup`, `/api/log`,
-  `/api/recipe` (+ `/unpin`), `/latest` (preview, `?screen=<name>`), `/images/`,
-  `/health`. `renderWithFallback` tries other screens if one fails so the device
-  never blanks.
+  `/api/recipe` (+ `/unpin`), `/latest` (preview, `?screen=<name>`, `?battery=NN`),
+  `/images/`, `/health`. `renderWithFallback` tries other screens if one fails so
+  the device never blanks. `/api/display` reads the device's `Percent-Charged`
+  header into the render context so the clock can show battery.
 - `internal/paprika` — parses Paprika exports (`.paprikarecipes` ZIP of gzipped
   JSON, bare gzipped JSON, or plain JSON) into `recipe.Recipe`.
 - `internal/recipe` — the normalized recipe model (leaf package).

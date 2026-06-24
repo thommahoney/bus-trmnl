@@ -30,13 +30,14 @@ type Item struct {
 
 // In is the input to a design render.
 type In struct {
-	Buses  []Item
-	Trains []Item
-	Now    time.Time
-	Tick   int // monotonic per-render counter; drives anti-burn-in motion
-	Width  int
-	Height int
-	Note   string // shown when there are no arrivals (e.g. "data unavailable")
+	Buses   []Item
+	Trains  []Item
+	Now     time.Time
+	Tick    int // monotonic per-render counter; drives anti-burn-in motion
+	Width   int
+	Height  int
+	Note    string  // shown when there are no arrivals (e.g. "data unavailable")
+	Battery Battery // device charge, shown next to the clock
 }
 
 // Ink tones, picked from the panel's 16-level grayscale.
@@ -212,7 +213,11 @@ func drawClock(dc *gg.Context, in In, fw, fh float64) {
 	c := corners[((in.Tick%4)+4)%4]
 	dc.SetFontFace(newFace(ibmPlexMonoReg, fh*0.028))
 	dc.SetColor(inkD2)
-	dc.DrawStringAnchored(in.Now.Format("3:04 PM"), c[0], c[1], c[2], 0.5)
+	label := in.Now.Format("3:04 PM")
+	if lbl := batteryLabel(in.Battery); lbl != "" {
+		label += "   " + lbl
+	}
+	dc.DrawStringAnchored(label, c[0], c[1], c[2], 0.5)
 }
 
 // drawNote centres a status line, nudged around by tick so it too keeps moving.

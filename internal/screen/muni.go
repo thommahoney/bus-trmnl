@@ -40,21 +40,23 @@ func (m *Muni) Render(ctx context.Context, now time.Time, width, height int) ([]
 	m.store.EnsureFresh(ctx)
 	boards, fetchStats := m.store.Snapshot()
 	tick := int(m.tick.Add(1) - 1)
+	battery := render.BatteryFromContext(ctx)
 
 	if m.design == config.MuniClassic {
-		meta := &render.Metadata{FetchStats: fetchStats, RefreshRate: m.refresh.RateAt(now)}
+		meta := &render.Metadata{FetchStats: fetchStats, RefreshRate: m.refresh.RateAt(now), Battery: battery}
 		return render.Screen(boards, now, width, height, meta)
 	}
 
 	buses, trains := render.Items(boards, now)
 	in := render.In{
-		Buses:  buses,
-		Trains: trains,
-		Now:    now,
-		Tick:   tick,
-		Width:  width,
-		Height: height,
-		Note:   noteFor(boards),
+		Buses:   buses,
+		Trains:  trains,
+		Now:     now,
+		Tick:    tick,
+		Width:   width,
+		Height:  height,
+		Note:    noteFor(boards),
+		Battery: battery,
 	}
 	switch m.design {
 	case config.MuniRadar:

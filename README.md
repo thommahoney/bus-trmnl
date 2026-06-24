@@ -53,7 +53,9 @@ repeats. Everything else is server-side:
    configured list, so the device cycles through them with no device-side state.
 2. **Rendering** — for the MUNI screen the server recomputes countdowns from
    cached 511 predictions and renders a grayscale PNG sized to the device, with
-   the time-of-day `refresh_rate`.
+   the time-of-day `refresh_rate`. The MUNI screens also show the **device
+   battery %** next to the clock (e.g. `9:53 PM   73%`), read from the
+   `Percent-Charged` header the firmware sends on each poll.
 3. **Demand-driven 511** — there's no background poller. The MUNI screen
    refreshes the 511 cache only when it's about to render *and* the cache is
    older than `five11.poll_interval` (single-flighted). Other screens (e.g. the
