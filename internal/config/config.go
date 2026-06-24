@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +19,19 @@ type Config struct {
 	Refresh RefreshConfig  `yaml:"refresh"`
 	Screens []ScreenConfig `yaml:"screens"`
 	Boards  []BoardConfig  `yaml:"boards"`
+	Recipes RecipesConfig  `yaml:"recipes"`
+}
+
+// RecipesConfig controls the optional recipe focus-mode feature: uploading a
+// Paprika recipe pins it to the screen, taking over the rotation until it
+// expires.
+type RecipesConfig struct {
+	// PinTTL is how long an uploaded recipe stays on screen before the device
+	// returns to its normal rotation. Default 3h.
+	PinTTL Duration `yaml:"pin_ttl"`
+	// StateFile is where the pinned recipe is persisted so it survives a
+	// restart mid-cook. Default: pin.json beside the image dir.
+	StateFile string `yaml:"state_file"`
 }
 
 // Screen types usable in ScreenConfig.Type.
@@ -212,6 +226,16 @@ func (c *Config) applyDefaults() {
 		if c.Boards[i].Max == 0 {
 			c.Boards[i].Max = 3
 		}
+	}
+	if c.Recipes.PinTTL.D() == 0 {
+		c.Recipes.PinTTL = Duration(3 * time.Hour)
+	}
+	if c.Recipes.StateFile == "" {
+		// Kept inside image_dir: that is the directory the server is guaranteed
+		// to be able to write (the deploy runs as a non-root user that may not
+		// own the image_dir's parent). pruneOld only reaps "*.png", so the pin
+		// file is left alone.
+		c.Recipes.StateFile = filepath.Join(c.Server.ImageDir, "pin.json")
 	}
 }
 

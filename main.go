@@ -17,6 +17,7 @@ import (
 	"github.com/thommahoney/bus-trmnl/internal/board"
 	"github.com/thommahoney/bus-trmnl/internal/config"
 	"github.com/thommahoney/bus-trmnl/internal/five11"
+	"github.com/thommahoney/bus-trmnl/internal/pin"
 	"github.com/thommahoney/bus-trmnl/internal/screen"
 	"github.com/thommahoney/bus-trmnl/internal/server"
 )
@@ -87,12 +88,18 @@ func runServe(args []string) {
 	}
 	rot := screen.NewRotation(screens...)
 
+	// Recipe focus mode: an uploaded Paprika recipe pins to the screen for
+	// cfg.Recipes.PinTTL, taking over the rotation until it expires.
+	pin.EnsureDir(cfg.Recipes.StateFile)
+	pins := pin.NewStore(cfg.Recipes.StateFile, cfg.Recipes.PinTTL.D())
+	recipeScreen := screen.NewRecipe(pins)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	srv := &http.Server{
 		Addr:    cfg.Server.Listen,
-		Handler: server.New(cfg, loc, rot).Handler(),
+		Handler: server.New(cfg, loc, rot, pins, recipeScreen).Handler(),
 	}
 
 	go func() {

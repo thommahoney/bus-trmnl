@@ -81,3 +81,9 @@ boards:
     lines: ["N"]
     destination_contains: "Caltrain"
     max: 3
+
+# Optional. Recipe focus mode: POST a Paprika export to /api/recipe and it pins
+# to the screen, taking over the rotation until it expires. Defaults shown.
+# recipes:
+#   pin_ttl: "3h" # how long an uploaded recipe stays up before the rotation resumes
+#   # state_file: "/data/images/pin.json" # where the pin is persisted across restarts

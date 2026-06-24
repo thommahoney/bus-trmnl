@@ -71,9 +71,54 @@ startup if that floor would exceed the limit.
 | `GET /api/setup`  | First-boot pairing; returns `api_key` / `friendly_id`.      |
 | `GET /api/display`| Returns `{ image_url, filename, refresh_rate, ... }`.       |
 | `POST /api/log`   | Accepts device telemetry; returns 204.                      |
+| `POST /api/recipe`| Upload a Paprika recipe; pins it to the screen (see [Recipes](#recipes)). |
+| `POST /api/recipe/unpin` | Clear the pinned recipe and resume the rotation.     |
 | `GET /latest`     | Preview a screen as PNG (`?screen=<name>`); no rotation advance. |
 | `GET /images/...` | Serves rendered PNGs.                                        |
 | `GET /health`     | Health check.                                               |
+
+## Recipes
+
+The display doubles as a kitchen recipe card. Upload a **Paprika** recipe export
+and it takes over the screen — full-screen, static, easy to read with floury
+hands — for **3 hours**, then automatically returns to the normal MUNI/cat
+rotation. Uploading again replaces it and resets the 3 hours; you can also clear
+it early.
+
+It's a "focus mode": while a recipe is pinned the rotation is frozen, so the
+screen won't cycle away mid-cook. The pin is persisted, so a server restart
+won't drop it.
+
+**Upload a recipe:**
+
+```sh
+# A single .paprikarecipe (gzipped JSON), a .paprikarecipes ZIP, or plain JSON.
+curl --data-binary @pancakes.paprikarecipe https://trmnl.thom.is/api/recipe
+# Clear it early and resume the rotation:
+curl -X POST https://trmnl.thom.is/api/recipe/unpin
+```
+
+The endpoint accepts either the raw file bytes (as above) or a multipart form
+file field — whichever your client sends.
+
+> **Note:** `/api/recipe` is intentionally **open** (no token): anyone who can
+> reach the server can pin a recipe. That's by design for a trusted/personal
+> deployment; if you expose it more widely, put it behind a reverse-proxy auth
+> rule. Tune the hold and persistence under `recipes:` in the config.
+
+**Pin straight from the Paprika app (iOS Shortcut):**
+
+1. Open **Shortcuts** → **+** → name it e.g. "Send to TRMNL".
+2. Add **Receive** *Files* from the **Share Sheet** (tap the top bar → enable
+   *Show in Share Sheet*, input type *Files*).
+3. Add **Get Contents of URL** and configure:
+   - **URL**: `https://trmnl.thom.is/api/recipe`
+   - **Method**: `POST`
+   - **Request Body**: `File` → choose the *Shortcut Input*.
+4. Save. Now in **Paprika**, open a recipe → **Share** → **Send to TRMNL**, and
+   it appears on the panel within a wake cycle.
+
+Preview the card without a device: `GET /latest?screen=recipe`.
 
 ## Setup
 

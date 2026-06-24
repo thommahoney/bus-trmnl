@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -17,24 +18,34 @@ import (
 	"time"
 
 	"github.com/thommahoney/bus-trmnl/internal/config"
+	"github.com/thommahoney/bus-trmnl/internal/paprika"
+	"github.com/thommahoney/bus-trmnl/internal/pin"
+	"github.com/thommahoney/bus-trmnl/internal/recipe"
 	"github.com/thommahoney/bus-trmnl/internal/render"
 	"github.com/thommahoney/bus-trmnl/internal/screen"
 )
 
+// maxUpload caps a recipe upload body.
+const maxUpload = 16 << 20
+
 // Server serves the BYOS endpoints the TRMNL device polls.
 type Server struct {
-	cfg *config.Config
-	loc *time.Location
-	rot *screen.Rotation
+	cfg    *config.Config
+	loc    *time.Location
+	rot    *screen.Rotation
+	pins   *pin.Store
+	recipe screen.Screen
 
 	mu       sync.Mutex
 	lastFile string
 	lastGen  time.Time
 }
 
-// New creates a Server.
-func New(cfg *config.Config, loc *time.Location, rot *screen.Rotation) *Server {
-	return &Server{cfg: cfg, loc: loc, rot: rot}
+// New creates a Server. pins and recipeScreen back the recipe focus-mode
+// feature: when a recipe is pinned, /api/display shows recipeScreen instead of
+// the rotation.
+func New(cfg *config.Config, loc *time.Location, rot *screen.Rotation, pins *pin.Store, recipeScreen screen.Screen) *Server {
+	return &Server{cfg: cfg, loc: loc, rot: rot, pins: pins, recipe: recipeScreen}
 }
 
 // Handler returns the HTTP mux for the server.
@@ -46,6 +57,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/display/", s.handleDisplay)
 	mux.HandleFunc("/api/log", s.handleLog)
 	mux.HandleFunc("/api/log/", s.handleLog)
+	mux.HandleFunc("/api/recipe", s.handleRecipeUpload)
+	mux.HandleFunc("/api/recipe/unpin", s.handleRecipeUnpin)
 	mux.HandleFunc("/latest", s.handleLatest)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.Handle("/images/", http.StripPrefix("/images/", http.FileServer(http.Dir(s.cfg.Server.ImageDir))))
@@ -147,7 +160,21 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(s.loc)
 	refresh := int(s.cfg.Refresh.RateAt(now).Seconds())
 
-	filename, err := s.renderWithFallback(r.Context(), s.rot.Next(), now, width, height)
+	// Recipe focus mode takes over the rotation: while a recipe is pinned and
+	// unexpired, show only it and leave the rotation where it is. Active()
+	// clears an expired pin, so the rotation resumes on its own once the 3h
+	// hold lapses.
+	var next screen.Screen
+	if s.recipe != nil && s.pins != nil {
+		if _, ok := s.pins.Active(now); ok {
+			next = s.recipe
+		}
+	}
+	if next == nil {
+		next = s.rot.Next()
+	}
+
+	filename, err := s.renderWithFallback(r.Context(), next, now, width, height)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": 500, "error": "render failed"})
 		return
@@ -221,6 +248,11 @@ func (s *Server) pruneOld(now time.Time) {
 	}
 	cutoff := now.Add(-10 * time.Minute)
 	for _, e := range entries {
+		// Only reap rendered frames — never sidecar state like pin.json that
+		// also lives in image_dir.
+		if !strings.HasSuffix(e.Name(), ".png") {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue
@@ -251,7 +283,12 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 	scr := s.rot.Peek()
 	if name := r.URL.Query().Get("screen"); name != "" {
 		var ok bool
-		if scr, ok = s.rot.ByName(name); !ok {
+		if s.recipe != nil && name == s.recipe.Name() {
+			scr, ok = s.recipe, true
+		} else {
+			scr, ok = s.rot.ByName(name)
+		}
+		if !ok {
 			http.Error(w, "unknown screen "+strconv.Quote(name), http.StatusNotFound)
 			return
 		}
@@ -268,6 +305,89 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(png)))
 	w.Write(png)
 }
+
+// handleRecipeUpload accepts a Paprika export, parses it, and pins the first
+// recipe to the display for the configured hold (default 3h), replacing any
+// current pin. It is intentionally open (no token) so anyone with the link can
+// upload — see the recipe feature notes in CLAUDE.md. The body may be a
+// multipart form file or the raw file bytes (e.g. an iOS Shortcut).
+func (s *Server) handleRecipeUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST a Paprika file", http.StatusMethodNotAllowed)
+		return
+	}
+	data, err := readUpload(r)
+	if err != nil {
+		http.Error(w, "could not read upload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	rec, err := s.ingest(data, time.Now().In(s.loc))
+	if err != nil {
+		log.Printf("recipe upload rejected: %v", err)
+		http.Error(w, "could not parse Paprika recipe: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	_, until, _ := s.pins.Current()
+	log.Printf("pinned recipe %q until %s", rec.Title, until.Format(time.Kitchen))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       200,
+		"title":        rec.Title,
+		"pinned_until": until.Format(time.RFC3339),
+	})
+}
+
+// handleRecipeUnpin clears the pinned recipe, returning the device to its
+// normal rotation immediately.
+func (s *Server) handleRecipeUnpin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST to unpin", http.StatusMethodNotAllowed)
+		return
+	}
+	s.pins.Clear()
+	log.Printf("recipe unpinned")
+	writeJSON(w, http.StatusOK, map[string]any{"status": 200, "pinned": false})
+}
+
+// ingest parses a recipe file and pins the first recipe found. It is the single
+// seam every ingestion channel funnels through (web/Shortcut today; Telegram,
+// email, etc. later).
+func (s *Server) ingest(data []byte, now time.Time) (recipe.Recipe, error) {
+	recs, err := paprika.Parse(data)
+	if err != nil {
+		return recipe.Recipe{}, err
+	}
+	if len(recs) == 0 {
+		return recipe.Recipe{}, errNoRecipes
+	}
+	s.pins.Set(recs[0], now)
+	return recs[0], nil
+}
+
+var errNoRecipes = errors.New("no recipes found in file")
+
+// readUpload pulls the file bytes from either a multipart form (any field) or
+// the raw request body.
+func readUpload(r *http.Request) ([]byte, error) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(maxUpload); err != nil {
+			return nil, err
+		}
+		for _, fhs := range r.MultipartForm.File {
+			for _, fh := range fhs {
+				f, err := fh.Open()
+				if err != nil {
+					return nil, err
+				}
+				defer f.Close()
+				return io.ReadAll(io.LimitReader(f, maxUpload))
+			}
+		}
+		return nil, errNoFile
+	}
+	return io.ReadAll(io.LimitReader(r.Body, maxUpload))
+}
+
+var errNoFile = errors.New("no file in form upload")
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})

@@ -63,9 +63,28 @@ server-side:
   render counter) and `Cat` (fetches cataas.com, scales, Floyd–Steinberg dithers
   to 16-level grayscale under the device size cap).
 - `internal/server` — BYOS HTTP API: `/api/display`, `/api/setup`, `/api/log`,
-  `/latest` (preview, `?screen=<name>`), `/images/`, `/health`.
-  `renderWithFallback` tries other screens if one fails so the device never
-  blanks.
+  `/api/recipe` (+ `/unpin`), `/latest` (preview, `?screen=<name>`), `/images/`,
+  `/health`. `renderWithFallback` tries other screens if one fails so the device
+  never blanks.
+- `internal/paprika` — parses Paprika exports (`.paprikarecipes` ZIP of gzipped
+  JSON, bare gzipped JSON, or plain JSON) into `recipe.Recipe`.
+- `internal/recipe` — the normalized recipe model (leaf package).
+- `internal/pin` — mutex-guarded "pinned recipe + expiry", persisted to
+  `pin.json` (default inside `image_dir`, the dir the non-root container can
+  write); `Active` clears the pin once it expires.
+
+## Recipe focus mode
+
+Optional feature, independent of the rotation. `POST /api/recipe` (open, no
+token — by user choice) parses a Paprika file and **pins** the recipe for
+`recipes.pin_ttl` (default 3h). While a pin is active, `/api/display` renders
+the `recipe` screen instead of advancing the rotation; when it expires the
+rotation resumes on its own. `internal/server.ingest` is the single seam every
+ingestion channel funnels through (today: web `curl`/iOS Shortcut; later:
+Telegram/email/MMS as thin adapters). The card (`render.Recipe`) is deliberately
+**static** — you read it while cooking — the opposite of the moving MUNI designs.
+The pin file lives in `image_dir` because the distroless `nonroot` container
+can't write `/data` directly; `pruneOld` only reaps `*.png` so it's left alone.
 
 ## How we develop together (IMPORTANT)
 
@@ -84,8 +103,8 @@ server-side:
   (`-buildvcs=false` avoids git "dubious ownership" when running as root over
   the mounted checkout; the `/go` volume caches modules between runs.)
 - Verify a render visually: `curl localhost:2300/latest?screen=cat` (or
-  `muni-radar`, `muni-board`, `muni-stream`), which previews a screen without
-  advancing the rotation.
+  `muni-radar`, `muni-board`, `muni-stream`, `recipe`), which previews a screen
+  without advancing the rotation.
 
 ## TRMNL X firmware (the device)
 
@@ -151,5 +170,7 @@ facts we rely on (verified from source + the device's `/api/log` telemetry):
   decision log.
 - `design/multi-screen-plan.md` — rotation + demand-driven 511 design.
 - `design/philosophy.md` — the e-ink rendering/visual rationale.
+- `design/recipe-feature.md` — Paprika upload, 3h pinned focus mode, the
+  real-recipe rendering learnings, and the nginx/battery operational notes.
 - Product docs: TRMNL BYOS — https://docs.trmnl.com/go/diy/byos; API spec —
   `usetrmnl/terminus` `doc/api.adoc`. Transit data — https://511.org/open-data/transit.
