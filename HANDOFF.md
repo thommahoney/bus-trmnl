@@ -210,9 +210,10 @@ README.md                    # user-facing setup/run instructions
   `/images/` (file server). `/api/display` optionally checks the `Access-Token`
   header against `device.access_token` (empty = no auth, for trusted LANs),
   reads `WIDTH`/`HEIGHT`, computes `refresh_rate` via `RateAt(now-in-tz)`,
-  renders a timestamped PNG, prunes images older than 10 min, and returns the
-  BYOS JSON. Header lookup tolerates both `Access-Token` and `ACCESS_TOKEN`
-  casings.
+  renders a content-addressed PNG (`<screen>-<sha256[:8]>.png`, so an unchanged
+  frame keeps its name and the device skips the redraw), prunes images older
+  than 10 min, and returns the BYOS JSON. Header lookup tolerates both
+  `Access-Token` and `ACCESS_TOKEN` casings.
 - **main** — `serve` wires it all up with graceful shutdown and logs a warning
   if `(distinct stops) × (3600 / poll seconds) > 60` (the 511 budget).
   `discover -query "..."` lists 511 stop codes whose name matches, to fill in

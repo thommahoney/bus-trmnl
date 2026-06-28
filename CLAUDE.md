@@ -30,13 +30,20 @@ returned `image_url` → sleep for `refresh_rate` seconds → repeat. All logic 
 server-side:
 
 - **Rotation is server-side:** each successive `/api/display` serves the next
-  screen; the device just re-downloads whatever URL it is handed (filenames are
-  timestamped so it always re-fetches).
+  screen; the device just re-downloads whatever URL it is handed. Filenames are
+  **content-addressed** (`<screen>-<sha256[:8]>.png`), so a screen whose pixels
+  changed gets a new name and redraws, while an unchanged frame keeps the same
+  name and the firmware's filename cache (`checkCurrentFileName`) skips both the
+  download and the panel refresh. The moving MUNI designs change every render so
+  they always redraw; a static screen (a pinned recipe) is fetched once and then
+  skipped, saving a full grayscale refresh every wake.
 - **refresh_rate** is per-response: 30s during the weekday rush window
   (07:45–08:15 America/Los_Angeles), 60s otherwise.
 - **Forced full refresh:** `/api/display` returns `maximum_compatibility: true`
-  so the device does a full panel refresh every wake — belt-and-suspenders
-  against the observed ghosting, on top of the relocating MUNI designs.
+  so that whenever the device *does* redraw it's a full panel refresh —
+  belt-and-suspenders against the observed ghosting, on top of the relocating
+  MUNI designs. (It has no effect on wakes the device skips via the
+  content-addressed filename cache above.)
 - **Demand-driven 511:** there is no background poller. The MUNI screen calls
   `board.Store.EnsureFresh` at render time, which hits 511 only if the cache is
   older than `poll_interval` (default 2m), single-flighted. Non-MUNI screens

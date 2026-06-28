@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -216,8 +217,12 @@ func (s *Server) renderWithFallback(ctx context.Context, scr screen.Screen, now 
 	return "", err
 }
 
-// renderToFile renders one screen to a uniquely named PNG and prunes stale
-// files. The filename changes each cycle so the device re-downloads.
+// renderToFile renders one screen to a content-addressed PNG and prunes stale
+// files. The filename is the screen name plus a hash of the image bytes, so an
+// unchanged frame keeps the same filename and the device's filename cache skips
+// the re-download and panel refresh (firmware checkCurrentFileName); any change
+// to the pixels yields a new name and a redraw. Dynamic screens (the moving
+// MUNI designs, cats) change every render, so they still redraw every wake.
 func (s *Server) renderToFile(ctx context.Context, scr screen.Screen, now time.Time, width, height int) (string, error) {
 	png, err := scr.Render(ctx, now, width, height)
 	if err != nil {
@@ -226,7 +231,8 @@ func (s *Server) renderToFile(ctx context.Context, scr screen.Screen, now time.T
 	if err := os.MkdirAll(s.cfg.Server.ImageDir, 0o755); err != nil {
 		return "", err
 	}
-	filename := scr.Name() + "-" + strconv.FormatInt(now.Unix(), 10) + ".png"
+	sum := sha256.Sum256(png)
+	filename := scr.Name() + "-" + hex.EncodeToString(sum[:8]) + ".png"
 	path := filepath.Join(s.cfg.Server.ImageDir, filename)
 	if err := os.WriteFile(path, png, 0o644); err != nil {
 		return "", err
