@@ -12,6 +12,14 @@ import (
 type Battery struct {
 	Percent int
 	Present bool
+	// Volts is the device's reported pack voltage (Battery-Voltage header), or
+	// 0 when absent. It degrades far more steadily than Percent near empty,
+	// which is why it — not the percentage — drives the low-battery warning.
+	Volts float64
+	// Low is set by the server when Volts is at or below the configured
+	// device.low_battery_voltage threshold, which stamps LowBatteryOverlay
+	// onto every rendered screen.
+	Low bool
 }
 
 type batteryCtxKey struct{}

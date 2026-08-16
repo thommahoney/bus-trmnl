@@ -79,6 +79,30 @@ startup if that floor would exceed the limit.
 | `GET /images/...` | Serves rendered PNGs.                                        |
 | `GET /health`     | Health check.                                               |
 
+## Low battery warning
+
+When the device is running out of charge, every screen — MUNI, cat, recipe —
+gets a large **LOW BATTERY** badge across the bottom. Without it a dead device
+is invisible: the e-ink panel keeps showing its last image, so stale arrival
+times look exactly like live ones.
+
+The trigger is the device's reported **pack voltage**, not its percentage. The
+percentage flattens out near empty (in practice it sits at 4% for days), while
+the voltage keeps dropping, so voltage gives a much sharper signal. The default
+threshold of `3.70` V yields roughly two days of warning before the device
+shuts off:
+
+```yaml
+device:
+  low_battery_voltage: 3.70   # 0 disables the warning
+```
+
+Preview it without waiting for a flat battery:
+
+```sh
+curl -o low.png "http://localhost:2300/latest?screen=cat&battery=2&voltage=3.42"
+```
+
 ## Recipes
 
 The display doubles as a kitchen recipe card. Upload a **Paprika** recipe export

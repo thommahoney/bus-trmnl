@@ -175,7 +175,7 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 		next = s.rot.Next()
 	}
 
-	ctx := render.ContextWithBattery(r.Context(), parseBattery(r))
+	ctx := render.ContextWithBattery(r.Context(), parseBattery(r, s.cfg.Device.LowVoltage()))
 	filename, err := s.renderWithFallback(ctx, next, now, width, height)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": 500, "error": "render failed"})
@@ -228,6 +228,7 @@ func (s *Server) renderToFile(ctx context.Context, scr screen.Screen, now time.T
 	if err != nil {
 		return "", err
 	}
+	png = stampLowBattery(ctx, png)
 	if err := os.MkdirAll(s.cfg.Server.ImageDir, 0o755); err != nil {
 		return "", err
 	}
@@ -245,6 +246,24 @@ func (s *Server) renderToFile(ctx context.Context, scr screen.Screen, now time.T
 
 	s.pruneOld(now)
 	return filename, nil
+}
+
+// stampLowBattery adds the low-battery warning to a rendered frame when the
+// device's telemetry says it needs charging. It is applied here — once, to the
+// finished bytes — so every screen in the rotation and every fallback picks it
+// up. A failed overlay is logged and the original frame returned: a missing
+// warning is far better than a blank panel.
+func stampLowBattery(ctx context.Context, frame []byte) []byte {
+	b := render.BatteryFromContext(ctx)
+	if !b.Low {
+		return frame
+	}
+	stamped, err := render.LowBatteryOverlay(frame, b)
+	if err != nil {
+		log.Printf("low-battery overlay failed: %v", err)
+		return frame
+	}
+	return stamped
 }
 
 // pruneOld removes rendered images older than ten minutes.
@@ -301,12 +320,25 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ?battery=<percent> previews the on-clock battery readout without a device.
+	// ?battery=<percent> previews the on-clock battery readout without a device;
+	// ?voltage=<volts> additionally previews the low-battery overlay, which
+	// fires when the value is at or below device.low_battery_voltage.
 	ctx := r.Context()
+	var bat render.Battery
 	if bs := r.URL.Query().Get("battery"); bs != "" {
 		if n, err := strconv.Atoi(bs); err == nil {
-			ctx = render.ContextWithBattery(ctx, render.Battery{Percent: n, Present: true})
+			bat.Percent, bat.Present = n, true
 		}
+	}
+	if vs := r.URL.Query().Get("voltage"); vs != "" {
+		if v, err := strconv.ParseFloat(vs, 64); err == nil && v > 0 {
+			bat.Volts = v
+			lowV := s.cfg.Device.LowVoltage()
+			bat.Low = lowV > 0 && v <= lowV
+		}
+	}
+	if bat.Present || bat.Volts > 0 {
+		ctx = render.ContextWithBattery(ctx, bat)
 	}
 
 	png, err := scr.Render(ctx, now, width, height)
@@ -315,6 +347,7 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 		return
 	}
+	png = stampLowBattery(ctx, png)
 
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Content-Length", strconv.Itoa(len(png)))
@@ -411,16 +444,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // parseBattery reads the device's charge from the request headers the TRMNL
 // firmware sends on every /api/display poll. Absent (e.g. non-device clients)
 // yields a zero Battery, which renders nothing.
-func parseBattery(r *http.Request) render.Battery {
-	s := header(r, "Percent-Charged", "Battery-Percent")
-	if s == "" {
-		return render.Battery{}
+//
+// lowV is the configured voltage at or below which the frame gets a
+// low-battery overlay; 0 disables the warning. Voltage rather than percentage
+// drives it because the reported percentage flattens near empty (days pinned at
+// 4%) while the voltage keeps dropping.
+func parseBattery(r *http.Request, lowV float64) render.Battery {
+	var b render.Battery
+	if s := header(r, "Percent-Charged", "Battery-Percent"); s != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			b.Percent = n
+			b.Present = true
+		}
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return render.Battery{}
+	if s := header(r, "Battery-Voltage"); s != "" {
+		if v, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil && v > 0 {
+			b.Volts = v
+		}
 	}
-	return render.Battery{Percent: n, Present: true}
+	// A device on the charger reports a rising voltage that can still sit below
+	// the threshold; no point nagging while it is already plugged in.
+	charging := header(r, "Battery-Charging") == "1" || header(r, "Usb-Connected") == "true"
+	b.Low = lowV > 0 && b.Volts > 0 && b.Volts <= lowV && !charging
+	return b
 }
 
 func atoiDefault(s string, def int) int {

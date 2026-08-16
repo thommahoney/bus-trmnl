@@ -29,6 +29,12 @@ device:
   # to disable auth on a trusted LAN.
   access_token: "${DEVICE_ACCESS_TOKEN}"
   friendly_id: "bus-trmnl"
+  # Pack voltage at or below which every screen gets a "LOW BATTERY" overlay.
+  # Voltage, not percentage: the reported percentage flattens out near empty
+  # (days on end pinned at 4%) while the voltage keeps falling. 3.70 gives
+  # roughly 2 days of warning; lower it for a later, tighter alert, or set it
+  # to 0 to turn the warning off.
+  low_battery_voltage: 3.70
 
 refresh:
   # Wake the device every 30s during the morning rush window, otherwise 60s.

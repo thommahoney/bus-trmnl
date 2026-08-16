@@ -94,7 +94,16 @@ type Five11Config struct {
 	PollInterval Duration `yaml:"poll_interval"`
 }
 
-// DeviceConfig controls device authentication.
+// DefaultLowBatteryVoltage is the pack voltage at or below which every screen
+// gets a low-battery overlay. Chosen from ~38 days of device telemetry: the
+// reported percentage flattens out near empty (three straight days pinned at
+// 4%), so it is a poor "charge me" signal, while voltage keeps falling. 3.70V
+// fired ~40h before the device would have died in one observed discharge cycle
+// and ~62h before it actually did in another; 3.65V would have missed the
+// first cycle entirely (its floor was 3.67V).
+const DefaultLowBatteryVoltage = 3.70
+
+// DeviceConfig controls device authentication and battery warnings.
 type DeviceConfig struct {
 	// AccessToken, if set, is the API key the device must present in the
 	// Access-Token header. Supports ${ENV_VAR} expansion. Leave empty to
@@ -102,6 +111,20 @@ type DeviceConfig struct {
 	AccessToken string `yaml:"access_token"`
 	// FriendlyID is the human-readable id returned during setup.
 	FriendlyID string `yaml:"friendly_id"`
+	// LowBatteryVoltage is the Battery-Voltage reading at or below which the
+	// server stamps a low-battery warning onto every rendered screen. Unset
+	// defaults to DefaultLowBatteryVoltage; set it to 0 to disable the
+	// warning entirely.
+	LowBatteryVoltage *float64 `yaml:"low_battery_voltage"`
+}
+
+// LowVoltage returns the effective low-battery threshold, or 0 when the
+// warning is disabled.
+func (d DeviceConfig) LowVoltage() float64 {
+	if d.LowBatteryVoltage == nil {
+		return DefaultLowBatteryVoltage
+	}
+	return *d.LowBatteryVoltage
 }
 
 // RefreshConfig describes how often the device should wake.
@@ -242,6 +265,9 @@ func (c *Config) applyDefaults() {
 func (c *Config) validate() error {
 	if c.Server.BaseURL == "" {
 		return fmt.Errorf("server.base_url is required so the device can fetch images")
+	}
+	if v := c.Device.LowVoltage(); v < 0 || v > 4.5 {
+		return fmt.Errorf("device.low_battery_voltage %.2f is out of range (want 0 to disable, or a pack voltage up to 4.5)", v)
 	}
 	for i, s := range c.Screens {
 		switch s.Type {

@@ -64,6 +64,44 @@ func TestScreensDefaultToMuni(t *testing.T) {
 	}
 }
 
+func TestLowBatteryVoltage(t *testing.T) {
+	t.Run("unset uses the default threshold", func(t *testing.T) {
+		var d DeviceConfig
+		if got := d.LowVoltage(); got != DefaultLowBatteryVoltage {
+			t.Fatalf("LowVoltage() = %v, want %v", got, DefaultLowBatteryVoltage)
+		}
+	})
+
+	t.Run("zero disables the warning", func(t *testing.T) {
+		v := 0.0
+		d := DeviceConfig{LowBatteryVoltage: &v}
+		if got := d.LowVoltage(); got != 0 {
+			t.Fatalf("LowVoltage() = %v, want 0 (disabled)", got)
+		}
+	})
+
+	t.Run("explicit threshold is honored", func(t *testing.T) {
+		v := 3.55
+		d := DeviceConfig{LowBatteryVoltage: &v}
+		if got := d.LowVoltage(); got != 3.55 {
+			t.Fatalf("LowVoltage() = %v, want 3.55", got)
+		}
+	})
+
+	t.Run("out-of-range threshold rejected", func(t *testing.T) {
+		for _, v := range []float64{-1, 9.9} {
+			c := Config{
+				Server:  ServerConfig{BaseURL: "http://example"},
+				Device:  DeviceConfig{LowBatteryVoltage: &v},
+				Screens: []ScreenConfig{{Type: ScreenCat}},
+			}
+			if err := c.validate(); err == nil {
+				t.Errorf("expected error for low_battery_voltage %v", v)
+			}
+		}
+	})
+}
+
 func TestScreensValidation(t *testing.T) {
 	t.Run("unknown type rejected", func(t *testing.T) {
 		c := Config{

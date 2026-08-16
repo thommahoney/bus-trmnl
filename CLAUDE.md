@@ -66,8 +66,9 @@ server-side:
   big numerals clear of bus/train markers at any rotation, covered by
   `designs_test.go` (collision + on-canvas + size-cap assertions). All four MUNI
   clocks render the device battery `%` next to the time; `battery.go` carries the
-  per-request `Battery` (from the `Percent-Charged` header) through the render
-  context.
+  per-request `Battery` (from the `Percent-Charged` / `Battery-Voltage` headers)
+  through the render context. `lowbattery.go` stamps the low-battery badge onto
+  a *finished* PNG (see below).
 - `internal/screen` — `Screen` interface + `Rotation`; `Muni` (parameterized by
   `design`, name `muni-<design>`, drives anti-burn-in motion via a per-screen
   render counter) and `Cat` (fetches cataas.com, scales, Floyd–Steinberg dithers
@@ -76,13 +77,43 @@ server-side:
   `/api/recipe` (+ `/unpin`), `/latest` (preview, `?screen=<name>`, `?battery=NN`),
   `/images/`, `/health`. `renderWithFallback` tries other screens if one fails so
   the device never blanks. `/api/display` reads the device's `Percent-Charged`
-  header into the render context so the clock can show battery.
+  and `Battery-Voltage` headers into the render context so the clock can show
+  battery and `stampLowBattery` can add the warning overlay.
 - `internal/paprika` — parses Paprika exports (`.paprikarecipes` ZIP of gzipped
   JSON, bare gzipped JSON, or plain JSON) into `recipe.Recipe`.
 - `internal/recipe` — the normalized recipe model (leaf package).
 - `internal/pin` — mutex-guarded "pinned recipe + expiry", persisted to
   `pin.json` (default inside `image_dir`, the dir the non-root container can
   write); `Active` clears the pin once it expires.
+
+## Low-battery warning
+
+The device dies silently: the panel holds its last image, so a dead device looks
+like a working one showing stale arrivals. To make that visible, any frame
+rendered while the device reports a low pack voltage gets a loud "LOW BATTERY"
+badge stamped on it.
+
+**It keys off voltage, not percentage.** ~38 days of `/api/display` telemetry
+showed the reported percentage flattening out near empty — the device sat at 4%
+for three straight days, and spent 8 days below 10% before dying — so "<10%" is
+a multi-day window, not an actionable signal. Voltage keeps falling the whole
+way (3.67V at that 4% plateau, 3.01V at death). `device.low_battery_voltage`
+(default `3.70`, `0` disables) is the threshold; 3.70 would have fired ~40h and
+~62h ahead of the two observed cycle ends, where 3.2V gives barely an hour.
+
+Mechanically it is a **post-process on the encoded PNG**
+(`render.LowBatteryOverlay`, applied in `server.stampLowBattery`), not something
+each screen draws: one call site in `renderToFile` covers every screen, the
+recipe pin and every `renderWithFallback` path. The overlay preserves the
+source's pixel format, so a dithered cat stays paletted/4-bpp and under the
+750KB firmware cap (~415KB → ~470KB with the badge). It composites through the
+badge's alpha mask so only the rounded pill lands on the frame. Because the
+badge changes the pixels, content-addressing gives the frame a new filename and
+the device redraws instead of skipping the wake. A charging device
+(`Battery-Charging: 1` / `Usb-Connected: true`) is never nagged.
+
+Preview it without a real flat battery:
+`curl "localhost:2300/latest?screen=cat&battery=2&voltage=3.42"`.
 
 ## Recipe focus mode
 
