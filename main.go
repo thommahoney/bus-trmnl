@@ -77,16 +77,20 @@ func runServe(args []string) {
 	client := five11.New(cfg.Five11.APIKey, cfg.Five11.Operator, cfg.Five11.BaseURL)
 	store := board.NewStore(cfg, client)
 
-	screens := make([]screen.Screen, 0, len(cfg.Screens))
+	slots := make([]screen.Slot, 0, len(cfg.Screens))
 	for _, sc := range cfg.Screens {
+		var s screen.Screen
 		switch sc.Type {
 		case config.ScreenMuni:
-			screens = append(screens, screen.NewMuni(store, cfg.Refresh, sc.Design))
+			s = screen.NewMuni(store, cfg.Refresh, sc.Design)
 		case config.ScreenCat:
-			screens = append(screens, screen.NewCat(sc.URL))
+			s = screen.NewCat(sc.URL)
+		default:
+			continue
 		}
+		slots = append(slots, screen.Slot{Screen: s, SkipDuringRush: sc.SkipDuringRush})
 	}
-	rot := screen.NewRotation(screens...)
+	rot := screen.NewRotation(slots...)
 
 	// Recipe focus mode: an uploaded Paprika recipe pins to the screen for
 	// cfg.Recipes.PinTTL, taking over the rotation until it expires.

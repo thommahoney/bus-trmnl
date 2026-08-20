@@ -68,6 +68,10 @@ screens:
   # which also helps with ghosting. The default URL already filters to grayscale
   # and sizes the image to fill the panel:
   - type: cat
+    # skip_during_rush drops this screen from the rotation during the
+    # refresh.rush_windows above, so every wake in the commute minutes shows
+    # transit. At least one screen must stay in the rotation during rush.
+    skip_during_rush: true
   #   url: "https://cataas.com/cat?filter=custom&r=100&g=100&b=100&width=1000&height=750"
 
 boards:

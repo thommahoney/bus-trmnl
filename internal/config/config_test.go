@@ -152,3 +152,65 @@ func TestDistinctStops(t *testing.T) {
 		t.Fatalf("DistinctStops() = %v, want 2 unique", got)
 	}
 }
+
+func TestIsRush(t *testing.T) {
+	r := RefreshConfig{
+		RushWindows: []Window{{
+			Days:  []string{"Mon", "Tue", "Wed", "Thu", "Fri"},
+			Start: "07:45",
+			End:   "08:15",
+		}},
+	}
+
+	cases := []struct {
+		name string
+		// 2026-06-01 is a Monday, 2026-06-06 is a Saturday.
+		when time.Time
+		want bool
+	}{
+		{"weekday in window", time.Date(2026, 6, 1, 7, 50, 0, 0, time.UTC), true},
+		{"weekday window start inclusive", time.Date(2026, 6, 1, 7, 45, 0, 0, time.UTC), true},
+		{"weekday window end exclusive", time.Date(2026, 6, 1, 8, 15, 0, 0, time.UTC), false},
+		{"weekday before window", time.Date(2026, 6, 1, 7, 44, 0, 0, time.UTC), false},
+		{"weekend in window time", time.Date(2026, 6, 6, 7, 50, 0, 0, time.UTC), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := r.IsRush(c.when); got != c.want {
+				t.Fatalf("IsRush(%v) = %v, want %v", c.when, got, c.want)
+			}
+		})
+	}
+}
+
+func TestSkipDuringRushValidation(t *testing.T) {
+	t.Run("every screen skipped is rejected", func(t *testing.T) {
+		c := Config{
+			Server:  ServerConfig{BaseURL: "http://example"},
+			Screens: []ScreenConfig{{Type: ScreenCat, SkipDuringRush: true}},
+		}
+		c.applyDefaults()
+		if err := c.validate(); err == nil {
+			t.Fatal("expected error: nothing left in the rotation during rush")
+		}
+	})
+
+	t.Run("one screen surviving rush is enough", func(t *testing.T) {
+		c := Config{
+			Server: ServerConfig{BaseURL: "http://example"},
+			Five11: Five11Config{APIKey: "k"},
+			Boards: []BoardConfig{{StopCode: "111"}},
+			Screens: []ScreenConfig{
+				{Type: ScreenMuni, Design: MuniRadar},
+				{Type: ScreenCat, SkipDuringRush: true},
+			},
+		}
+		c.applyDefaults()
+		if err := c.validate(); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+		if !c.HasRushScreen() {
+			t.Fatal("HasRushScreen() = false, want true")
+		}
+	})
+}

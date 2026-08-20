@@ -30,7 +30,9 @@ returned `image_url` → sleep for `refresh_rate` seconds → repeat. All logic 
 server-side:
 
 - **Rotation is server-side:** each successive `/api/display` serves the next
-  screen; the device just re-downloads whatever URL it is handed. Filenames are
+  screen; the device just re-downloads whatever URL it is handed. A screen with
+  `skip_during_rush: true` is passed over while a rush window is in effect (see
+  below), so the commute minutes stay on transit. Filenames are
   **content-addressed** (`<screen>-<sha256[:8]>.png`), so a screen whose pixels
   changed gets a new name and redraws, while an unchanged frame keeps the same
   name and the firmware's filename cache (`checkCurrentFileName`) skips both the
@@ -38,7 +40,9 @@ server-side:
   they always redraw; a static screen (a pinned recipe) is fetched once and then
   skipped, saving a full grayscale refresh every wake.
 - **refresh_rate** is per-response: 30s during the weekday rush window
-  (07:45–08:15 America/Los_Angeles), 60s otherwise.
+  (07:45–08:15 America/Los_Angeles), 60s otherwise. `RefreshConfig.IsRush` is
+  the single definition of "rush": both the rate and the `skip_during_rush`
+  screen filter key off it, so there is only ever one time range to edit.
 - **Forced full refresh:** `/api/display` returns `maximum_compatibility: true`
   so that whenever the device *does* redraw it's a full panel refresh —
   belt-and-suspenders against the observed ghosting, on top of the relocating
@@ -54,8 +58,10 @@ server-side:
 - `main.go` — CLI (`serve`, `discover`); builds the `[]screen.Screen` from
   config and wires a `screen.Rotation` into the server.
 - `internal/config` — YAML load/validate, `${ENV}` expansion, refresh windows,
-  the `screens` list (back-compat: omitted ⇒ `[{type: muni}]`) and each MUNI
-  screen's `design` (empty ⇒ `board`; validated against the four design names).
+  the `screens` list (back-compat: omitted ⇒ `[{type: muni}]`), each MUNI
+  screen's `design` (empty ⇒ `board`; validated against the four design names)
+  and each screen's `skip_during_rush` (validated so at least one screen
+  survives the rush filter — otherwise the rotation would have nothing to show).
 - `internal/five11` — 511.org SIRI `StopMonitoring` client (handles the UTF-8
   BOM and string-or-array `FlexString` quirks).
 - `internal/board` — `Store`: fetch/filter/cache arrivals; `EnsureFresh`
@@ -69,7 +75,10 @@ server-side:
   per-request `Battery` (from the `Percent-Charged` / `Battery-Voltage` headers)
   through the render context. `lowbattery.go` stamps the low-battery badge onto
   a *finished* PNG (see below).
-- `internal/screen` — `Screen` interface + `Rotation`; `Muni` (parameterized by
+- `internal/screen` — `Screen` interface + `Rotation` (a `[]Slot`, each screen
+  plus its `SkipDuringRush` flag; `Next(rush bool)` steps over skipped slots,
+  while `Peek`/`All` stay unfiltered — `All` backs `renderWithFallback`, where
+  showing any screen beats blanking the panel); `Muni` (parameterized by
   `design`, name `muni-<design>`, drives anti-burn-in motion via a per-screen
   render counter) and `Cat` (fetches cataas.com, scales, Floyd–Steinberg dithers
   to 16-level grayscale under the device size cap).

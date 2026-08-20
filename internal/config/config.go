@@ -61,6 +61,11 @@ type ScreenConfig struct {
 	// URL overrides the image source for the "cat" screen. Defaults to
 	// https://cataas.com/cat.
 	URL string `yaml:"url"`
+	// SkipDuringRush drops this screen from the rotation while a
+	// refresh.rush_windows window is in effect. The rush windows are the
+	// commute minutes, when an interleaved non-transit screen costs a wake
+	// that could have shown the next arrival.
+	SkipDuringRush bool `yaml:"skip_during_rush"`
 }
 
 // ServerConfig controls the HTTP server and image generation.
@@ -282,6 +287,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("screens[%d]: unknown type %q (want %q or %q)", i, s.Type, ScreenMuni, ScreenCat)
 		}
 	}
+	if len(c.Screens) > 0 && !c.HasRushScreen() {
+		return fmt.Errorf("every screen sets skip_during_rush; at least one must stay in the rotation during the refresh.rush_windows")
+	}
 	// 511 settings only matter when a MUNI screen is in the rotation.
 	if c.HasScreen(ScreenMuni) {
 		if c.Five11.APIKey == "" {
@@ -317,6 +325,17 @@ func (c *Config) HasScreen(t string) bool {
 	return false
 }
 
+// HasRushScreen reports whether any screen stays in the rotation during a rush
+// window.
+func (c *Config) HasRushScreen() bool {
+	for _, s := range c.Screens {
+		if !s.SkipDuringRush {
+			return true
+		}
+	}
+	return false
+}
+
 // Location returns the configured timezone.
 func (c *Config) Location() (*time.Location, error) {
 	return time.LoadLocation(c.Server.Timezone)
@@ -335,8 +354,10 @@ func (c *Config) DistinctStops() []string {
 	return out
 }
 
-// RateAt returns the refresh interval that applies at time t.
-func (r RefreshConfig) RateAt(t time.Time) time.Duration {
+// IsRush reports whether t falls inside one of the configured rush windows.
+// It is the single definition of "rush": both the refresh rate and the
+// screens.skip_during_rush filter key off it.
+func (r RefreshConfig) IsRush(t time.Time) bool {
 	day := t.Weekday().String()[:3]
 	minutes := t.Hour()*60 + t.Minute()
 	for _, w := range r.RushWindows {
@@ -349,8 +370,16 @@ func (r RefreshConfig) RateAt(t time.Time) time.Duration {
 			continue
 		}
 		if minutes >= start && minutes < end {
-			return r.RushRate.D()
+			return true
 		}
+	}
+	return false
+}
+
+// RateAt returns the refresh interval that applies at time t.
+func (r RefreshConfig) RateAt(t time.Time) time.Duration {
+	if r.IsRush(t) {
+		return r.RushRate.D()
 	}
 	return r.DefaultRate.D()
 }

@@ -172,7 +172,9 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if next == nil {
-		next = s.rot.Next()
+		// During a rush window the rotation skips screens marked
+		// skip_during_rush, so the commute minutes stay on transit.
+		next = s.rot.Next(s.cfg.Refresh.IsRush(now))
 	}
 
 	ctx := render.ContextWithBattery(r.Context(), parseBattery(r, s.cfg.Device.LowVoltage()))

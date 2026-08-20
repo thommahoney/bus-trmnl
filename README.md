@@ -31,6 +31,10 @@ full panel refresh on every wake. The device wakes **every 30 seconds during the
 weekday morning rush (7:45–8:15 AM)** and **every 60 seconds** the rest of the
 time.
 
+During the rush windows, screens marked `skip_during_rush: true` drop out of the
+rotation, so every wake in the commute minutes shows transit rather than a cat.
+The rotation picks up where it left off once the window closes.
+
 ## Why BYOS?
 
 TRMNL's hosted cloud caps updates at roughly one every 5 minutes (2 minutes for
@@ -210,7 +214,8 @@ Key fields:
   `board`) or `{type: cat, url: <optional cataas URL>}`. List the same `muni`
   type with different designs to rotate layouts wake-to-wake. Omit the section
   to default to a single `muni` screen; 511 settings are only required when a
-  `muni` screen is present.
+  `muni` screen is present. Any entry may set `skip_during_rush: true` to drop
+  out of the rotation during the `refresh.rush_windows` — see below.
 - `boards[]` — each board's `stop_code`, `lines`, `destination_contains`,
   `direction`, and `max`.
 
