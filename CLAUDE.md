@@ -205,6 +205,20 @@ facts we rely on (verified from source + the device's `/api/log` telemetry):
 - Rendering: text wants crisp grayscale; photos want dithering (the cat path).
 - Device auth: `device.access_token` is optional (empty ⇒ open, intended for a
   trusted LAN or behind nginx). The live deploy currently runs with it empty.
+- **Overnight MUNI lines:** 511 publishes the rail-substitution runs as their
+  own lines, not as variants of the rail line — `NOWL` ("OWL JUDAH", ~00:59–05:29
+  nightly), `NBUS` ("JUDAH BUS", the pre-train early trip), plus LOWL/KBUS/FBUS/
+  TBUS elsewhere. A board filtering `lines: ["N"]` therefore goes empty once the
+  trains stop, which is what put "no arrivals" on the panel all night; the live
+  N board lists all three. `render.kindOf` deliberately renders them with the
+  **train** glyph despite an actual bus pulling up: the glyph identifies the
+  *line*, not the vehicle, and on an unlabelled panel it is the only thing
+  separating the N board from the 43/44 board.
+  The 43/44 board has no overnight counterpart — the 43 has no owl service and
+  the 44 Owl runs Glen Park–Hunters Point, ~1.2km from 9th Ave at the closest.
+  All of this was verified against the 511 GTFS feed
+  (`/transit/datafeeds?operator_id=SF`), which is how to re-check spans when a
+  service change lands.
 
 ## Known limitations / good first cleanups
 

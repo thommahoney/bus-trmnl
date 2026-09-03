@@ -213,7 +213,14 @@ func TestStreamMarkersDoNotCollide(t *testing.T) {
 }
 
 func TestKindOf(t *testing.T) {
-	cases := map[string]string{"43": "bus", "44": "bus", "5R": "bus", "N": "train", "KT": "train", "": "bus"}
+	cases := map[string]string{
+		"43": "bus", "44": "bus", "5R": "bus", "N": "train", "KT": "train", "": "bus",
+		// Rail-substitution lines are buses in real life, but the glyph names
+		// the line, not the vehicle — it is the only thing telling the N board
+		// apart from the 43/44 board on an unlabelled panel. Overnight the N
+		// stop is served entirely by these, and they must still read as "the N".
+		"NOWL": "train", "NBUS": "train", "LOWL": "train", "KBUS": "train",
+	}
 	for ref, want := range cases {
 		if got := kindOf(ref, ""); got != want {
 			t.Fatalf("kindOf(%q) = %q, want %q", ref, got, want)

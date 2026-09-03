@@ -77,6 +77,14 @@ func Items(boards []board.Board, now time.Time) (buses, trains []Item) {
 // kindOf classifies a route as "bus" or "train". SF MUNI Metro lines are
 // lettered (J K L M N T, plus the F/E streetcars); buses are numbered. So a
 // leading letter means rail.
+//
+// The glyph is a *line* identifier, not a vehicle type: on the panel it is the
+// only thing distinguishing the N board from the 43/44 board, since neither
+// carries a label. So the rail-substitution lines (NBUS "JUDAH BUS", NOWL "OWL
+// JUDAH", plus LOWL/KBUS/FBUS/TBUS) deliberately keep the train glyph even
+// though an actual bus pulls up — semantically they are the N, and that is the
+// question the glyph answers. The leading-letter rule already gets this right;
+// do not "fix" it to classify them as buses.
 func kindOf(lineRef, line string) string {
 	s := strings.TrimSpace(lineRef)
 	if s == "" {

@@ -83,13 +83,21 @@ boards:
     destination_contains: "Forest Hill"
     max: 3
 
-  # N Judah toward Caltrain (inbound/downtown), from 9th Ave & Judah St.
-  # The inbound destination may read "Caltrain" or "Embarcadero" depending on
-  # the run; adjust destination_contains if you see nothing.
+  # N Judah inbound (toward downtown/Caltrain), from 9th Ave & Judah St.
+  # Filtered by direction rather than destination: the inbound terminal varies
+  # by run ("Caltrain", "Embarcadero", and different ones again overnight), so
+  # a destination_contains filter here tends to hide trips you wanted.
+  # Late-night tip: MUNI's rail-substitution runs are their own 511 lines, not
+  # variants of the rail line, so "N" alone leaves the board empty once the
+  # trains stop. Add NOWL (Owl Judah, ~00:59-05:29 nightly) and NBUS (Judah Bus,
+  # the pre-train early trip) to keep it populated overnight. The same holds for
+  # LOWL/KBUS/FBUS/TBUS on the other Metro lines. Note that these runs have
+  # their own terminals, so a destination_contains filter may exclude them —
+  # prefer `direction` if you want them to show.
   - title: "N → Caltrain"
     stop_code: "CHANGE-ME" # TODO: run `bus-trmnl discover -query "Judah"`
-    lines: ["N"]
-    destination_contains: "Caltrain"
+    lines: ["N", "NOWL", "NBUS"]
+    direction: "IB"
     max: 3
 
 # Optional. Recipe focus mode: POST a Paprika export to /api/recipe and it pins

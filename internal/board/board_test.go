@@ -136,3 +136,35 @@ func TestMinutesUntil(t *testing.T) {
 		t.Fatalf("MinutesUntil(past) = %d, want 0", got)
 	}
 }
+
+// Overnight the N stop is served by the rail-substitution lines, which 511
+// publishes as their own LineRefs rather than as "N" — so a board listing only
+// "N" goes blank from roughly 00:50 to 05:46 while buses are still pulling up.
+// The live config lists all three; this pins that they survive the filter.
+func TestFilterArrivalsKeepsOvernightSubstitutionLines(t *testing.T) {
+	base := time.Now().UTC()
+	mk := func(off time.Duration) string { return base.Add(off).Format(time.RFC3339) }
+	visits := []five11.MonitoredStopVisit{
+		visit("NOWL", "IB", "Owl Judah", mk(4*time.Minute)),
+		visit("NBUS", "IB", "Judah Bus", mk(9*time.Minute)),
+		visit("N", "IB", "Caltrain", mk(20*time.Minute)),
+		visit("NOWL", "OB", "Ocean Beach", mk(2*time.Minute)), // wrong direction
+		visit("LOWL", "IB", "Owl Taraval", mk(1*time.Minute)), // another line's owl
+	}
+
+	bc := config.BoardConfig{
+		Lines:     []string{"N", "NOWL", "NBUS"},
+		Direction: "IB",
+		Max:       3,
+	}
+	got := filterArrivals(bc, visits)
+	if len(got) != 3 {
+		t.Fatalf("got %d arrivals, want 3: %+v", len(got), got)
+	}
+	want := []string{"NOWL", "NBUS", "N"}
+	for i, w := range want {
+		if got[i].LineRef != w {
+			t.Fatalf("arrival %d = %q, want %q (soonest first): %+v", i, got[i].LineRef, w, got)
+		}
+	}
+}
