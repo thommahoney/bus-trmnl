@@ -20,6 +20,7 @@ import (
 	"github.com/thommahoney/bus-trmnl/internal/pin"
 	"github.com/thommahoney/bus-trmnl/internal/screen"
 	"github.com/thommahoney/bus-trmnl/internal/server"
+	"github.com/thommahoney/bus-trmnl/internal/weather"
 )
 
 func main() {
@@ -77,6 +78,20 @@ func runServe(args []string) {
 	client := five11.New(cfg.Five11.APIKey, cfg.Five11.Operator, cfg.Five11.BaseURL)
 	store := board.NewStore(cfg, client)
 
+	// Built only when a weather screen is configured; like the 511 store it
+	// fetches on demand, so it costs nothing while other screens are up.
+	var forecasts *weather.Store
+	if cfg.HasScreen(config.ScreenWeather) {
+		forecasts = weather.NewStore(weather.New(weather.Options{
+			Latitude:  *cfg.Weather.Latitude,
+			Longitude: *cfg.Weather.Longitude,
+			Units:     cfg.Weather.Units,
+			Model:     cfg.Weather.Model,
+			Location:  loc,
+			BaseURL:   cfg.Weather.BaseURL,
+		}), cfg.Weather.PollInterval.D())
+	}
+
 	slots := make([]screen.Slot, 0, len(cfg.Screens))
 	for _, sc := range cfg.Screens {
 		var s screen.Screen
@@ -85,6 +100,8 @@ func runServe(args []string) {
 			s = screen.NewMuni(store, cfg.Refresh, sc.Design)
 		case config.ScreenCat:
 			s = screen.NewCat(sc.URL)
+		case config.ScreenWeather:
+			s = screen.NewWeather(forecasts, cfg.Weather.Label)
 		default:
 			continue
 		}

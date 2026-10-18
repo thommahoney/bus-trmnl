@@ -10,7 +10,8 @@ Go. It drives a TRMNL **X** e-ink device (10.3", 1872×1404, 16-level grayscale)
 by serving full-screen PNGs the device downloads on each wake. The primary
 screen shows live **SF MUNI** arrival predictions from the **511.org** SIRI API.
 A rotation cycles the device through multiple screens — currently three "moving"
-MUNI designs (`radar`, `board`, `stream`) and a random cat photo.
+MUNI designs (`radar`, `board`, `stream`), a random cat photo and the day's
+weather forecast.
 
 The MUNI designs exist to fight e-ink **burn-in/ghosting** (observed on the
 physical panel): each reduces arrivals to a bus/train glyph + countdown and
@@ -51,7 +52,8 @@ server-side:
 - **Demand-driven 511:** there is no background poller. The MUNI screen calls
   `board.Store.EnsureFresh` at render time, which hits 511 only if the cache is
   older than `poll_interval` (default 2m), single-flighted. Non-MUNI screens
-  make zero 511 calls.
+  make zero 511 calls. The weather screen follows the same pattern against
+  Open-Meteo (`weather.Store.EnsureFresh`, `weather.poll_interval`, default 30m).
 
 ## Code structure
 
@@ -62,8 +64,14 @@ server-side:
   screen's `design` (empty ⇒ `board`; validated against the four design names)
   and each screen's `skip_during_rush` (validated so at least one screen
   survives the rush filter — otherwise the rotation would have nothing to show).
+  The `weather` block (lat/long, label, units, poll interval) is validated only
+  when a `weather` screen is listed.
 - `internal/five11` — 511.org SIRI `StopMonitoring` client (handles the UTF-8
   BOM and string-or-array `FlexString` quirks).
+- `internal/weather` — Open-Meteo forecast client (no API key) + `Store`
+  mirroring `board.Store`: demand-driven, throttled, single-flight, `Fetcher`
+  seam. A failed fetch keeps the last good forecast and retries after 5m.
+  `testdata/forecast.json` is a captured response.
 - `internal/board` — `Store`: fetch/filter/cache arrivals; `EnsureFresh`
   (demand-driven, throttled, single-flight); `Fetcher` interface for test fakes.
 - `internal/render` — grayscale PNGs with embedded fonts, tuned for e-ink (see
@@ -73,7 +81,8 @@ server-side:
   `designs_test.go` (collision + on-canvas + size-cap assertions). All four MUNI
   clocks render the device battery `%` next to the time; `battery.go` carries the
   per-request `Battery` (from the `Percent-Charged` / `Battery-Voltage` headers)
-  through the render context. `lowbattery.go` stamps the low-battery badge onto
+  through the render context. `weather.go` is the forecast screen (see below).
+  `lowbattery.go` stamps the low-battery badge onto
   a *finished* PNG (see below).
 - `internal/screen` — `Screen` interface + `Rotation` (a `[]Slot`, each screen
   plus its `SkipDuringRush` flag; `Next(rush bool)` steps over skipped slots,
@@ -81,7 +90,8 @@ server-side:
   showing any screen beats blanking the panel); `Muni` (parameterized by
   `design`, name `muni-<design>`, drives anti-burn-in motion via a per-screen
   render counter) and `Cat` (fetches cataas.com, scales, Floyd–Steinberg dithers
-  to 16-level grayscale under the device size cap).
+  to 16-level grayscale under the device size cap); `Weather` (errors when no
+  forecast has ever been fetched, so `renderWithFallback` shows something else).
 - `internal/server` — BYOS HTTP API: `/api/display`, `/api/setup`, `/api/log`,
   `/api/recipe` (+ `/unpin`), `/latest` (preview, `?screen=<name>`, `?battery=NN`),
   `/images/`, `/health`. `renderWithFallback` tries other screens if one fails so
@@ -94,6 +104,42 @@ server-side:
 - `internal/pin` — mutex-guarded "pinned recipe + expiry", persisted to
   `pin.json` (default inside `image_dir`, the dir the non-root container can
   write); `Active` clears the pin once it expires.
+
+## Weather screen
+
+`type: weather` renders current conditions in a header plus three stacked
+strips — temperature curve, wind bars (whisker = gusts, arrows point where the
+wind blows *to*), chance-of-rain bars — on one shared hour axis, 6am to
+midnight. `render.weatherDay` picks the day: **today until 20:00, then
+tomorrow**, since by evening today's chart is mostly history (the header's big
+temperature is always the current reading; the right-hand block names the
+charted day). Hours already past are drawn faint and a dashed "now" line
+crosses all three strips. The axis ticks every hour (long on the labelled
+3-hourly ones), and sunrise/sunset glyphs (half sun + up/down arrow,
+`drawSunEvent`) hang below it at their actual times; the header repeats the
+same glyphs beside the times rather than a bare "sun", which read as Sunday.
+
+The forecast only changes hourly, so this would be the most static frame in the
+rotation. `computeWeatherFrame` therefore relocates it per render: a 7-step
+drift (`weatherShift`) and the header swapping between top and bottom, a
+14-render cycle. `weather_test.go` asserts the regions stay on-canvas and
+disjoint at every step.
+
+It is deliberately **not** `skip_during_rush` in the live config — by user
+choice the forecast shows during the commute even though that wake then carries
+no MUNI times. A forecast older than 90 minutes is labelled "as of …"; one that
+no longer covers the charted day makes `Render` fail over to another screen.
+
+**Model choice:** `weather.model` defaults to `ncep_nbm_conus` (NOAA's National
+Blend of Models, US-only), not Open-Meteo's `best_match`. In the US best_match
+is HRRR on a 3km grid whose cell for 9th & Judah is centred ~1.5km southwest;
+over Oct 2–4 2026 it ran hot on sea-breeze afternoons (84°F forecast at 2pm vs
+65–75°F at the Golden Gate Park, downtown and Cole Valley stations). NBM's 2.5km
+cell lands ~100m from the stop and its mean error against those stations was
+lower (3.3 vs 4.1°F at GG Park). That was a 2.5-day sample during a heat event,
+so re-check before treating it as settled: Open-Meteo accepts
+`models=a,b,c` to pull several side by side, and
+`api.weather.gov/stations/{604PG,F2543,SFOC1}/observations` gives ground truth.
 
 ## Low-battery warning
 
@@ -154,7 +200,7 @@ can't write `/data` directly; `pruneOld` only reaps `*.png` so it's left alone.
   (`-buildvcs=false` avoids git "dubious ownership" when running as root over
   the mounted checkout; the `/go` volume caches modules between runs.)
 - Verify a render visually: `curl localhost:2300/latest?screen=cat` (or
-  `muni-radar`, `muni-board`, `muni-stream`, `recipe`), which previews a screen
+  `muni-radar`, `muni-board`, `muni-stream`, `weather`, `recipe`), which previews a screen
   without advancing the rotation.
 
 ## TRMNL X firmware (the device)

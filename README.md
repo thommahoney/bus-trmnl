@@ -31,6 +31,13 @@ full panel refresh on every wake. The device wakes **every 30 seconds during the
 weekday morning rush (7:45–8:15 AM)** and **every 60 seconds** the rest of the
 time.
 
+A third screen type shows the **weather**: current conditions plus an hourly
+chart of temperature, wind (with gusts and direction) and chance of rain from
+6 AM to midnight. It covers today until 8 PM, then switches to tomorrow. The
+forecast comes from [Open-Meteo](https://open-meteo.com), which needs no API
+key. Like the MUNI designs, the layout shifts on every render so it doesn't burn
+in.
+
 During the rush windows, screens marked `skip_during_rush: true` drop out of the
 rotation, so every wake in the commute minutes shows transit rather than a cat.
 The rotation picks up where it left off once the window closes.
@@ -63,7 +70,8 @@ repeats. Everything else is server-side:
 3. **Demand-driven 511** — there's no background poller. The MUNI screen
    refreshes the 511 cache only when it's about to render *and* the cache is
    older than `five11.poll_interval` (single-flighted). Other screens (e.g. the
-   cat) make zero 511 calls.
+   cat) make zero 511 calls. The weather screen works the same way against
+   Open-Meteo, at most once per `weather.poll_interval` (default 30 min).
 
 So the **display** can refresh every 30s while staying within 511's **60
 requests/hour** token limit (2 stops, fetched at most every 2 min = 60/hour);
@@ -211,13 +219,19 @@ Key fields:
 - `refresh.rush_rate` / `default_rate` / `rush_windows` — the wake cadence.
 - `screens[]` — the rotation, in order, one per wake. Each entry is
   `{type: muni, design: <radar|board|stream|classic>}` (design defaults to
-  `board`) or `{type: cat, url: <optional cataas URL>}`. List the same `muni`
+  `board`), `{type: cat, url: <optional cataas URL>}` or `{type: weather}`
+  (which needs the `weather` section below). List the same `muni`
   type with different designs to rotate layouts wake-to-wake. Omit the section
   to default to a single `muni` screen; 511 settings are only required when a
   `muni` screen is present. Any entry may set `skip_during_rush: true` to drop
   out of the rotation during the `refresh.rush_windows` — see below.
 - `boards[]` — each board's `stop_code`, `lines`, `destination_contains`,
   `direction`, and `max`.
+- `weather` — `latitude` / `longitude` of the point to forecast (required when
+  a `weather` screen is listed), plus optional `label` (place name shown on the
+  screen), `units` (`imperial` or `metric`), `model` (defaults to NOAA's
+  US-only `ncep_nbm_conus`; use `best_match` outside the contiguous US) and
+  `poll_interval`.
 
 Secrets use `${ENV_VAR}` expansion, so `FIVE11_API_KEY` and
 `DEVICE_ACCESS_TOKEN` stay out of the file.

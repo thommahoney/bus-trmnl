@@ -20,6 +20,38 @@ type Config struct {
 	Screens []ScreenConfig `yaml:"screens"`
 	Boards  []BoardConfig  `yaml:"boards"`
 	Recipes RecipesConfig  `yaml:"recipes"`
+	Weather WeatherConfig  `yaml:"weather"`
+}
+
+// Unit systems usable in WeatherConfig.Units.
+const (
+	UnitsImperial = "imperial" // °F, mph, inches
+	UnitsMetric   = "metric"   // °C, km/h, millimetres
+)
+
+// WeatherConfig locates and tunes the forecast shown by the "weather" screen.
+// It is only consulted when a weather screen is in the rotation.
+type WeatherConfig struct {
+	// Latitude and Longitude are the point to forecast, in decimal degrees.
+	// Both are required when a weather screen is configured.
+	Latitude  *float64 `yaml:"latitude"`
+	Longitude *float64 `yaml:"longitude"`
+	// Label is an optional place name shown on the screen.
+	Label string `yaml:"label"`
+	// Units is "imperial" (°F, mph, in; the default) or "metric" (°C, km/h, mm).
+	Units string `yaml:"units"`
+	// Model is the Open-Meteo forecast model. The default, "ncep_nbm_conus",
+	// is NOAA's National Blend of Models: a bias-corrected 2.5km blend that
+	// tracked nearby stations better than Open-Meteo's own pick, but covers
+	// the contiguous US only. Set "best_match" elsewhere.
+	Model string `yaml:"model"`
+	// PollInterval is the minimum spacing between forecast fetches. The
+	// forecast is fetched on demand when the weather screen renders and the
+	// cache is older than this, never on a fixed schedule. Default 30m.
+	PollInterval Duration `yaml:"poll_interval"`
+	// BaseURL is the Open-Meteo API root. Defaults to the public endpoint,
+	// which needs no API key.
+	BaseURL string `yaml:"base_url"`
 }
 
 // RecipesConfig controls the optional recipe focus-mode feature: uploading a
@@ -36,8 +68,9 @@ type RecipesConfig struct {
 
 // Screen types usable in ScreenConfig.Type.
 const (
-	ScreenMuni = "muni"
-	ScreenCat  = "cat"
+	ScreenMuni    = "muni"
+	ScreenCat     = "cat"
+	ScreenWeather = "weather"
 )
 
 // MUNI designs usable in ScreenConfig.Design. The first three relocate their
@@ -53,7 +86,7 @@ const (
 // ScreenConfig selects one screen in the device's display rotation. The
 // device shows the configured screens in order, one per wake.
 type ScreenConfig struct {
-	// Type is the screen kind: "muni" or "cat".
+	// Type is the screen kind: "muni", "cat" or "weather".
 	Type string `yaml:"type"`
 	// Design selects the MUNI layout: "radar", "board", "stream" or
 	// "classic". Ignored for non-MUNI screens. Empty defaults to "board".
@@ -255,6 +288,18 @@ func (c *Config) applyDefaults() {
 			c.Boards[i].Max = 3
 		}
 	}
+	if c.Weather.Units == "" {
+		c.Weather.Units = UnitsImperial
+	}
+	if c.Weather.Model == "" {
+		c.Weather.Model = "ncep_nbm_conus"
+	}
+	if c.Weather.PollInterval.D() == 0 {
+		c.Weather.PollInterval = Duration(30 * time.Minute)
+	}
+	if c.Weather.BaseURL == "" {
+		c.Weather.BaseURL = "https://api.open-meteo.com/v1"
+	}
 	if c.Recipes.PinTTL.D() == 0 {
 		c.Recipes.PinTTL = Duration(3 * time.Hour)
 	}
@@ -282,9 +327,9 @@ func (c *Config) validate() error {
 			default:
 				return fmt.Errorf("screens[%d]: unknown muni design %q (want %q, %q, %q or %q)", i, s.Design, MuniRadar, MuniBoard, MuniStream, MuniClassic)
 			}
-		case ScreenCat:
+		case ScreenCat, ScreenWeather:
 		default:
-			return fmt.Errorf("screens[%d]: unknown type %q (want %q or %q)", i, s.Type, ScreenMuni, ScreenCat)
+			return fmt.Errorf("screens[%d]: unknown type %q (want %q, %q or %q)", i, s.Type, ScreenMuni, ScreenCat, ScreenWeather)
 		}
 	}
 	if len(c.Screens) > 0 && !c.HasRushScreen() {
@@ -302,6 +347,22 @@ func (c *Config) validate() error {
 			if b.StopCode == "" {
 				return fmt.Errorf("boards[%d] (%q) is missing stop_code; run the discover command to find it", i, b.Title)
 			}
+		}
+	}
+	// Likewise the forecast location only matters to a weather screen.
+	if c.HasScreen(ScreenWeather) {
+		w := c.Weather
+		if w.Latitude == nil || w.Longitude == nil {
+			return fmt.Errorf("weather.latitude and weather.longitude are required for the weather screen")
+		}
+		if *w.Latitude < -90 || *w.Latitude > 90 {
+			return fmt.Errorf("weather.latitude %v is out of range (want -90 to 90)", *w.Latitude)
+		}
+		if *w.Longitude < -180 || *w.Longitude > 180 {
+			return fmt.Errorf("weather.longitude %v is out of range (want -180 to 180)", *w.Longitude)
+		}
+		if w.Units != UnitsImperial && w.Units != UnitsMetric {
+			return fmt.Errorf("weather.units %q is not supported (want %q or %q)", w.Units, UnitsImperial, UnitsMetric)
 		}
 	}
 	for _, w := range c.Refresh.RushWindows {

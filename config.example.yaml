@@ -73,6 +73,11 @@ screens:
     # transit. At least one screen must stay in the rotation during rush.
     skip_during_rush: true
   #   url: "https://cataas.com/cat?filter=custom&r=100&g=100&b=100&width=1000&height=750"
+  # The day's hourly forecast: temperature, wind and chance of rain from 6am to
+  # midnight (today until 8pm, then tomorrow). Needs the `weather` section
+  # below. Left in the rotation during rush here, since the commute is when the
+  # weather matters; add skip_during_rush: true to keep rush wakes on transit.
+  # - type: weather
 
 boards:
   # 43 and 44 outbound toward Forest Hill Station, from 9th Ave & Kirkham.
@@ -99,6 +104,22 @@ boards:
     lines: ["N", "NOWL", "NBUS"]
     direction: "IB"
     max: 3
+
+# Optional; only read when a `weather` screen is listed above. The forecast
+# comes from Open-Meteo (https://open-meteo.com), which needs no API key.
+# weather:
+#   latitude: 37.7624   # required: the point to forecast, in decimal degrees
+#   longitude: -122.4662
+#   label: "Inner Sunset" # optional place name shown on the screen
+#   units: imperial     # imperial (°F, mph, in; default) or metric (°C, km/h, mm)
+#   # Forecast model. The default is NOAA's National Blend of Models, which is
+#   # US-only (contiguous states); set "best_match" anywhere else to let
+#   # Open-Meteo choose.
+#   model: ncep_nbm_conus
+#   # Minimum spacing between forecast fetches. Fetched on demand when the
+#   # weather screen renders, never on a schedule; the forecast only changes
+#   # hourly, so there is little to gain from going lower.
+#   poll_interval: "30m"
 
 # Optional. Recipe focus mode: POST a Paprika export to /api/recipe and it pins
 # to the screen, taking over the rotation until it expires. Defaults shown.

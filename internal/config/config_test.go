@@ -106,10 +106,53 @@ func TestScreensValidation(t *testing.T) {
 	t.Run("unknown type rejected", func(t *testing.T) {
 		c := Config{
 			Server:  ServerConfig{BaseURL: "http://example"},
-			Screens: []ScreenConfig{{Type: "weather"}},
+			Screens: []ScreenConfig{{Type: "horoscope"}},
 		}
 		if err := c.validate(); err == nil {
 			t.Fatal("expected error for unknown screen type")
+		}
+	})
+
+	t.Run("weather screen requires a location", func(t *testing.T) {
+		c := Config{
+			Server:  ServerConfig{BaseURL: "http://example"},
+			Screens: []ScreenConfig{{Type: ScreenWeather}},
+		}
+		c.applyDefaults()
+		if err := c.validate(); err == nil {
+			t.Fatal("expected error: weather screen with no latitude/longitude")
+		}
+
+		lat, lon := 37.7624, -122.4662
+		c.Weather.Latitude, c.Weather.Longitude = &lat, &lon
+		if err := c.validate(); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+		if c.Weather.Units != UnitsImperial || c.Weather.Model != "ncep_nbm_conus" || c.Weather.PollInterval.D() != 30*time.Minute {
+			t.Fatalf("weather defaults = %+v", c.Weather)
+		}
+
+		c.Weather.Units = "kelvin"
+		if err := c.validate(); err == nil {
+			t.Fatal("expected error for unknown weather units")
+		}
+		c.Weather.Units = UnitsMetric
+		bad := 123.0
+		c.Weather.Latitude = &bad
+		if err := c.validate(); err == nil {
+			t.Fatal("expected error for out-of-range latitude")
+		}
+	})
+
+	t.Run("weather settings ignored without a weather screen", func(t *testing.T) {
+		c := Config{
+			Server:  ServerConfig{BaseURL: "http://example"},
+			Weather: WeatherConfig{Units: "kelvin"},
+			Screens: []ScreenConfig{{Type: ScreenCat}},
+		}
+		c.applyDefaults()
+		if err := c.validate(); err != nil {
+			t.Fatalf("validate: %v", err)
 		}
 	})
 
